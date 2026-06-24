@@ -12,6 +12,7 @@ import os
 import sys
 import json
 import glob
+import urllib.request
 from dotenv import load_dotenv
 load_dotenv(override=True)
 os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
@@ -43,6 +44,19 @@ def count_lines(path: str) -> dict:
     total = len(lines)
     blank = sum(1 for l in lines if not l.strip())
     return {"total": total, "blank": blank, "code": total - blank}
+
+
+def go_analyze(path: str) -> dict:
+    """调用 Go 静态分析服务，返回函数列表、导入、问题、复杂度等"""
+    abs_path = os.path.abspath(path)
+    payload = json.dumps({"file_path": abs_path}).encode()
+    req = urllib.request.Request(
+        "http://localhost:8787/analyze",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read())
 
 
 # ============================================================
@@ -95,6 +109,20 @@ TOOLS = [
             "required": ["path"]
         }
     },
+    {
+        "name": "go_analyze",
+        "description": "调用 Go 静态分析服务，对 Python 文件做深度分析：提取函数列表（名称/行数/参数数/是否有docstring）、import 列表、代码行数统计、检测安全问题和风格问题、复杂度评估。比 read_file 更结构化，适合快速了解代码质量",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Python 文件路径"
+                }
+            },
+            "required": ["path"]
+        }
+    },
 ]
 
 # 工具名 → 函数的映射表，方便后面根据名字找到函数执行
@@ -103,6 +131,7 @@ TOOL_FUNCTIONS = {
     "list_py_files": list_py_files,
     "read_file": read_file,
     "count_lines": count_lines,
+    "go_analyze": go_analyze,
 }
 
 

@@ -17,6 +17,9 @@ wheels/
 .vscode/
 *.swp
 
+# Go build output
+go-tools/analyzer
+
 # Generated review results
 *.review.json
 eval_results.json
