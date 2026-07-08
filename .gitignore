@@ -23,3 +23,10 @@ go-tools/analyzer
 # Generated review results
 *.review.json
 eval_results.json
+sl100_eval_results.json
+sl100_doc_eval_results.json
+sl100_diagnosis_*.json
+sl100_facts_*.json
+sl100_docs_*.json
+sl100_report_*.md
+sl100_trace_*.json

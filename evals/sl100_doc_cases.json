@@ -1,0 +1,34 @@
+[
+  {
+    "id": "mqtt_troubleshooting_path",
+    "query": "设备 MQTT 连不上，应该看哪些服务和日志？",
+    "expected": {
+      "sources": ["SL100服务架构与部署说明.md", "MQTT_WebSocket_对接技术文档.md"],
+      "terms": ["deviceShadow", "MQTT", "gateway"]
+    }
+  },
+  {
+    "id": "gateway_responsibility",
+    "query": "gateway 在 SL100 里负责什么？",
+    "expected": {
+      "sources": ["SL100服务架构与部署说明.md"],
+      "terms": ["gateway", "HTTP", "deviceShadow"]
+    }
+  },
+  {
+    "id": "websocket_path",
+    "query": "App WebSocket 连接应该看哪个服务？",
+    "expected": {
+      "sources": ["MQTT_WebSocket_对接技术文档.md", "SL100服务架构与部署说明.md"],
+      "terms": ["WebSocket", "deviceShadow", "/ws"]
+    }
+  },
+  {
+    "id": "push_service_role",
+    "query": "pushService 主要负责什么？",
+    "expected": {
+      "sources": ["SL100服务架构与部署说明.md"],
+      "terms": ["pushService", "Redis", "推送"]
+    }
+  }
+]

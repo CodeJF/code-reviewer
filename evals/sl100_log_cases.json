@@ -1,0 +1,112 @@
+[
+  {
+    "id": "device_login_failed",
+    "description": "设备登录失败应该识别 gateway 登录异常",
+    "log": "2026-07-01T10:00:01+08:00 info gateway request uri=/v1/device/login request_id=req-login-001 uuid=device-001\n2026-07-01T10:00:02+08:00 error gateway DeviceLogin failed request_id=req-login-001 uuid=device-001 error=\"UuidInvalid\"\n",
+    "expected": {
+      "incident_types": ["device_login_failed"],
+      "allowed_incident_types": ["device_login_failed"],
+      "services": ["gateway"],
+      "min_errors": 1
+    }
+  },
+  {
+    "id": "mqtt_connection_failed",
+    "description": "MQTT 连接失败应该识别 deviceShadow MQTT 异常",
+    "log": "2026-07-01T10:01:01+08:00 error deviceShadow mqtt init fail error=\"connect: connection refused\"\n2026-07-01T10:01:02+08:00 warning deviceShadow mqtt connect retry error=\"network timeout\"\n",
+    "expected": {
+      "incident_types": ["mqtt_connection_failed"],
+      "allowed_incident_types": ["mqtt_connection_failed"],
+      "services": ["deviceShadow"],
+      "min_errors": 1
+    }
+  },
+  {
+    "id": "mqtt_payload_invalid",
+    "description": "MQTT payload 格式错误应该识别 payload 异常",
+    "log": "2026-07-01T10:02:01+08:00 error deviceShadow payload data format error msg_id=msg-payload-001 payload=\"{bad json\" error=\"invalid character\"\n",
+    "expected": {
+      "incident_types": ["mqtt_payload_invalid"],
+      "allowed_incident_types": ["mqtt_payload_invalid"],
+      "services": ["deviceShadow"],
+      "min_errors": 1
+    }
+  },
+  {
+    "id": "device_online_offline_flapping",
+    "description": "设备短时间上下线应该识别上下线异常",
+    "log": "2026-07-01T10:03:01+08:00 debug deviceShadow device mqtt online subscribe uuid=device-002\n2026-07-01T10:03:05+08:00 warning deviceShadow device mqtt offline subscribe uuid=device-002\n2026-07-01T10:03:09+08:00 debug deviceShadow device mqtt online subscribe uuid=device-002\n2026-07-01T10:03:13+08:00 warning deviceShadow device mqtt offline subscribe uuid=device-002\n",
+    "expected": {
+      "incident_types": ["device_online_offline_flapping"],
+      "allowed_incident_types": ["device_online_offline_flapping"],
+      "services": ["deviceShadow"],
+      "min_errors": 0
+    }
+  },
+  {
+    "id": "rpc_call_failed",
+    "description": "RPC 通知失败应该识别跨服务调用异常",
+    "log": "2026-07-01T10:04:01+08:00 error gateway rpc notify device bind error request_id=req-rpc-001 error=\"dial tcp 127.0.0.1:802: connect refused\"\n",
+    "expected": {
+      "incident_types": ["rpc_call_failed"],
+      "allowed_incident_types": ["rpc_call_failed"],
+      "services": ["gateway"],
+      "min_errors": 1
+    }
+  },
+  {
+    "id": "push_failed",
+    "description": "推送失败应该识别 pushService 异常",
+    "log": "2026-07-01T10:05:01+08:00 error pushService ring push send error message_id=msg-push-001 error=\"getui token expired\"\n",
+    "expected": {
+      "incident_types": ["push_failed"],
+      "allowed_incident_types": ["push_failed"],
+      "services": ["pushService"],
+      "min_errors": 1
+    }
+  },
+  {
+    "id": "ota_push_failed",
+    "description": "OTA 推送失败应该识别升级异常",
+    "log": "2026-07-01T10:06:01+08:00 error pushService device upgrade failed push send error message_id=msg-ota-001 error=\"send failed\"\n",
+    "expected": {
+      "incident_types": ["ota_failed", "push_failed"],
+      "allowed_incident_types": ["ota_failed", "push_failed"],
+      "services": ["pushService"],
+      "min_errors": 1
+    }
+  },
+  {
+    "id": "websocket_failed",
+    "description": "WebSocket 推送失败应该识别 websocket 异常",
+    "log": "2026-07-01T10:07:01+08:00 error deviceShadow websocket send error msg_id=msg-ws-001 error=\"broken pipe\"\n",
+    "expected": {
+      "incident_types": ["websocket_failed"],
+      "allowed_incident_types": ["websocket_failed"],
+      "services": ["deviceShadow"],
+      "min_errors": 1
+    }
+  },
+  {
+    "id": "config_init_failed",
+    "description": "配置初始化失败应该识别启动配置异常",
+    "log": "2026-07-01T10:08:01+08:00 fatal gateway env file open error error=\"open env.yaml: no such file or directory\"\n2026-07-01T10:08:02+08:00 fatal gateway configuration parameter validation failed error=\"Redis address required\"\n",
+    "expected": {
+      "incident_types": ["config_init_failed"],
+      "allowed_incident_types": ["config_init_failed"],
+      "services": ["gateway"],
+      "min_errors": 2
+    }
+  },
+  {
+    "id": "database_connection_failed",
+    "description": "数据库连接失败应该识别 MySQL/Mongo/Redis 异常",
+    "log": "2026-07-01T10:09:01+08:00 fatal deviceShadow mysql connection error error=\"dial tcp 127.0.0.1:3306: connect refused\"\n2026-07-01T10:09:02+08:00 fatal deviceShadow redis conn error error=\"NOAUTH Authentication required\"\n",
+    "expected": {
+      "incident_types": ["database_connection_failed"],
+      "allowed_incident_types": ["database_connection_failed"],
+      "services": ["deviceShadow"],
+      "min_errors": 2
+    }
+  }
+]
