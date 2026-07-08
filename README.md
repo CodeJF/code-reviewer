@@ -14,6 +14,14 @@
 - **Go 日志分析服务** (`go-log-tools/`) — Go HTTP 服务解析日志，Python Agent 可调用
 - **MCP Server** (`sl100_mcp_server.py`) — 将 SL100 诊断能力暴露给支持 MCP 的客户端
 
+## 求职展示入口
+
+SL100 运维诊断 Agent 的求职包装材料：
+
+- [项目说明](docs/sl100-ops-agent-case-study.md)：真实问题、架构设计、关键取舍和安全策略。
+- [Demo 指南](docs/sl100-ops-agent-demo.md)：本地可复现命令、预期输出和演示顺序。
+- [面试讲稿](docs/sl100-ops-agent-interview.md)：3 分钟介绍、简历描述、常见追问和 STAR 版本。
+
 ## 快速开始
 
 ```bash
@@ -236,6 +244,7 @@ code-reviewer/
 ├── sl100_mcp_server.py   # MCP stdio server
 ├── scripts/test_sl100_mcp.py # MCP server smoke test
 ├── mcp/sl100-mcp-config.example.json
+├── docs/sl100-ops-agent-*.md # 求职展示材料
 ├── go-tools/        # Go 静态分析服务（跨语言工具链）
 │   ├── main.go
 │   └── go.mod
@@ -273,6 +282,7 @@ code-reviewer/
 | M5 | go-log-tools/ | Go 日志分析服务 |
 | M6 | sl100_docs_qa.py + eval_sl100_docs.py | 轻量 RAG 文档问答 + 检索评测 |
 | M7 | sl100_mcp_server.py | MCP Server |
+| M8 | docs/sl100-ops-agent-*.md | 求职包装、Demo 指南、面试讲稿 |
 
 ## 安全约束
 
