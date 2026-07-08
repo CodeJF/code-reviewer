@@ -176,6 +176,16 @@ uv run sl100_agent.py \
 
 ### MCP Server
 
+M7 的目标是把 SL100 工具标准化成 MCP Server，让 Claude Desktop / Claude Code 等 MCP 客户端直接调用。
+
+本地 smoke test，不调用 Claude：
+
+```bash
+uv run scripts/test_sl100_mcp.py
+```
+
+手动启动 MCP stdio server：
+
 ```bash
 uv run sl100_mcp_server.py
 ```
@@ -186,6 +196,14 @@ MCP tools:
 - `search_sl100_docs`
 - `summarize_incident`
 - `find_service_errors`
+
+Claude Desktop 配置示例：
+
+```bash
+cat mcp/sl100-mcp-config.example.json
+```
+
+配置后，MCP 客户端可以调用本地工具分析日志、检索 SL100 文档和总结 incident。
 
 ## Go 工具服务
 
@@ -216,6 +234,8 @@ code-reviewer/
 ├── eval_sl100_docs.py    # SL100 docs retrieval evals
 ├── sl100_docs_qa.py      # 轻量 RAG 文档问答
 ├── sl100_mcp_server.py   # MCP stdio server
+├── scripts/test_sl100_mcp.py # MCP server smoke test
+├── mcp/sl100-mcp-config.example.json
 ├── go-tools/        # Go 静态分析服务（跨语言工具链）
 │   ├── main.go
 │   └── go.mod

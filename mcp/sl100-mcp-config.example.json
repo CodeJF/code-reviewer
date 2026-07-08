@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "sl100-diagnosis": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/Users/jianfengxu/code-reviewer",
+        "run",
+        "sl100_mcp_server.py"
+      ],
+      "env": {
+        "SL100_ROOT": "/Users/jianfengxu/Desktop/SL100_Service"
+      }
+    }
+  }
+}
