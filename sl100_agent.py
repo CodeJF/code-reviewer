@@ -23,6 +23,20 @@ from sl100_log_core import (
     redact_text,
     search_docs,
 )
+from sl100_es import (
+    DEFAULT_ERROR_QUERY,
+    analyze_logs as es_analyze_logs,
+    count_logs as es_count_logs,
+    list_indices as es_list_indices,
+    search_logs as es_search_logs,
+)
+from sl100_remote import (
+    analyze_remote_logs as remote_analyze_logs,
+    list_remote_logs as remote_list_logs,
+    search_remote_log as remote_search_log,
+    tail_remote_log as remote_tail_log,
+)
+from sl100_diagnose import diagnose as product_diagnose
 
 
 def list_log_files(root: str = "") -> list[str]:
@@ -97,6 +111,178 @@ def go_analyze_log(path: str) -> dict[str, Any]:
 def search_sl100_docs(query: str, max_chunks: int = 5) -> list[dict[str, str]]:
     """Search local SL100 docs with lightweight keyword retrieval."""
     return search_docs(query, max_chunks=max_chunks)
+
+
+def list_es_indices(date: str = "", service: str = "") -> list[dict[str, Any]]:
+    """List SL100 Elasticsearch api-* indices from sl100-93."""
+    return es_list_indices(date_text=date, service=service)
+
+
+def search_es_logs(
+    service: str,
+    keyword: str = "",
+    date: str = "",
+    from_time: str = "",
+    to_time: str = "",
+    around: str = "",
+    around_minutes: int = 10,
+    size: int = 20,
+) -> dict[str, Any]:
+    """Search redacted logs from the sl100-93 Elasticsearch stack."""
+    return es_search_logs(
+        service=service,
+        keyword=keyword,
+        date_text=date,
+        from_text=from_time,
+        to_text=to_time,
+        around_text=around,
+        around_minutes=around_minutes,
+        size=size,
+    )
+
+
+def count_es_errors(
+    service: str,
+    keyword: str = DEFAULT_ERROR_QUERY,
+    date: str = "",
+    from_time: str = "",
+    to_time: str = "",
+    around: str = "",
+    around_minutes: int = 10,
+) -> dict[str, Any]:
+    """Count error-like logs in Elasticsearch for one service and time window."""
+    return es_count_logs(
+        service=service,
+        keyword=keyword,
+        date_text=date,
+        from_text=from_time,
+        to_text=to_time,
+        around_text=around,
+        around_minutes=around_minutes,
+    )
+
+
+def analyze_es_logs(
+    service: str,
+    keyword: str = DEFAULT_ERROR_QUERY,
+    date: str = "",
+    from_time: str = "",
+    to_time: str = "",
+    around: str = "",
+    around_minutes: int = 10,
+    size: int = 80,
+) -> dict[str, Any]:
+    """Search ES logs and run deterministic SL100 incident diagnosis."""
+    return es_analyze_logs(
+        service=service,
+        keyword=keyword,
+        date_text=date,
+        from_text=from_time,
+        to_text=to_time,
+        around_text=around,
+        around_minutes=around_minutes,
+        size=size,
+        use_ai=False,
+    )
+
+
+def summarize_es_incident(
+    service: str,
+    keyword: str = DEFAULT_ERROR_QUERY,
+    date: str = "",
+    from_time: str = "",
+    to_time: str = "",
+    around: str = "",
+    around_minutes: int = 10,
+    size: int = 80,
+) -> dict[str, Any]:
+    """Return a compact incident summary from Elasticsearch logs."""
+    result = analyze_es_logs(
+        service=service,
+        keyword=keyword,
+        date=date,
+        from_time=from_time,
+        to_time=to_time,
+        around=around,
+        around_minutes=around_minutes,
+        size=size,
+    )
+    facts = result["facts"]
+    diagnosis = result["diagnosis"]
+    return {
+        "source": facts.get("source", {}),
+        "risk_level": diagnosis.get("risk_level"),
+        "summary": diagnosis.get("summary"),
+        "error_count": facts.get("error_count"),
+        "incidents": diagnosis.get("incidents", []),
+        "next_steps": diagnosis.get("next_steps", []),
+    }
+
+
+def list_remote_log_files(service: str = "") -> list[dict[str, str]]:
+    """List whitelisted remote service log files."""
+    return remote_list_logs(service)
+
+
+def tail_remote_log(service: str, log: str = "error", tail_lines: int = 300) -> dict[str, Any]:
+    """Tail one whitelisted remote service log file over SSH."""
+    return remote_tail_log(service, log, tail_lines)
+
+
+def search_remote_log(
+    service: str,
+    log: str = "error",
+    keyword: str = "",
+    tail_lines: int = 2000,
+    limit: int = 80,
+    date: str = "",
+    from_time: str = "",
+    to_time: str = "",
+    around: str = "",
+    around_minutes: int = 10,
+) -> list[dict[str, Any]]:
+    """Search a whitelisted remote log after tailing it over SSH."""
+    return remote_search_log(
+        service,
+        log,
+        keyword,
+        tail_lines,
+        limit,
+        date_text=date,
+        from_text=from_time,
+        to_text=to_time,
+        around_text=around,
+        around_minutes=around_minutes,
+    )
+
+
+def analyze_remote_service_log(
+    service: str,
+    logs: list[str] | None = None,
+    tail_lines: int = 800,
+    date: str = "",
+    from_time: str = "",
+    to_time: str = "",
+    around: str = "",
+    around_minutes: int = 10,
+) -> dict[str, Any]:
+    """Analyze whitelisted remote service file logs with deterministic rules."""
+    return remote_analyze_logs(
+        service,
+        logs=logs or ["error"],
+        tail_lines=tail_lines,
+        use_ai=False,
+        date_text=date,
+        from_text=from_time,
+        to_text=to_time,
+        around_text=around,
+        around_minutes=around_minutes,
+    )
+
+
+def diagnose_sl100_incident(query: str, size: int = 80, no_remote: bool = False) -> dict[str, Any]:
+    """Run the productized SL100 diagnosis pipeline and return one unified report."""
+    return product_diagnose(query, size=size, no_remote=no_remote)
 
 
 TOOLS = [
@@ -178,6 +364,162 @@ TOOLS = [
             "required": ["query"],
         },
     },
+    {
+        "name": "list_es_indices",
+        "description": "列出 sl100-93 Elasticsearch 中的 SL100 api-* 日志索引。date 格式如 2026-07-09。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date": {"type": "string"},
+                "service": {"type": "string", "description": "gateway|deviceShadow|pushService|access，可为空"},
+            },
+        },
+    },
+    {
+        "name": "search_es_logs",
+        "description": "从 sl100-93 Elasticsearch 查询脱敏日志。适合测试同事给出服务、时间、关键词后定位原始证据。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "service": {"type": "string", "description": "gateway|deviceShadow|pushService|access"},
+                "keyword": {"type": "string", "description": "关键词或 simple query string，例如 error、websocket、登录失败"},
+                "date": {"type": "string", "description": "Asia/Shanghai 日期，如 2026-07-09"},
+                "from_time": {"type": "string", "description": "Asia/Shanghai 开始时间，如 2026-07-09 09:00"},
+                "to_time": {"type": "string", "description": "Asia/Shanghai 结束时间，如 2026-07-09 10:00"},
+                "around": {"type": "string", "description": "Asia/Shanghai 中心时间，如 2026-07-09 09:20"},
+                "around_minutes": {"type": "integer", "default": 10},
+                "size": {"type": "integer", "default": 20},
+            },
+            "required": ["service"],
+        },
+    },
+    {
+        "name": "count_es_errors",
+        "description": "统计 sl100-93 Elasticsearch 中某服务在时间窗口内的错误类日志数量。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "service": {"type": "string", "description": "gateway|deviceShadow|pushService|access"},
+                "keyword": {"type": "string", "default": DEFAULT_ERROR_QUERY},
+                "date": {"type": "string"},
+                "from_time": {"type": "string"},
+                "to_time": {"type": "string"},
+                "around": {"type": "string"},
+                "around_minutes": {"type": "integer", "default": 10},
+            },
+            "required": ["service"],
+        },
+    },
+    {
+        "name": "analyze_es_logs",
+        "description": "查询 sl100-93 Elasticsearch 日志并运行本地规则诊断，返回 facts + diagnosis。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "service": {"type": "string", "description": "gateway|deviceShadow|pushService|access"},
+                "keyword": {"type": "string", "default": DEFAULT_ERROR_QUERY},
+                "date": {"type": "string"},
+                "from_time": {"type": "string"},
+                "to_time": {"type": "string"},
+                "around": {"type": "string"},
+                "around_minutes": {"type": "integer", "default": 10},
+                "size": {"type": "integer", "default": 80},
+            },
+            "required": ["service"],
+        },
+    },
+    {
+        "name": "summarize_es_incident",
+        "description": "从 Elasticsearch 日志生成压缩 incident 摘要，适合最终给用户解释排障结论。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "service": {"type": "string", "description": "gateway|deviceShadow|pushService|access"},
+                "keyword": {"type": "string", "default": DEFAULT_ERROR_QUERY},
+                "date": {"type": "string"},
+                "from_time": {"type": "string"},
+                "to_time": {"type": "string"},
+                "around": {"type": "string"},
+                "around_minutes": {"type": "integer", "default": 10},
+                "size": {"type": "integer", "default": 80},
+            },
+            "required": ["service"],
+        },
+    },
+    {
+        "name": "list_remote_log_files",
+        "description": "列出白名单内的远程服务器文件日志。作为 ES 缺失、延迟或需要 stderr/stdout 时的补充工具。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "service": {"type": "string", "description": "gateway|deviceShadow|pushService|cloudStorage|AdminService|scheduledTask，可为空"},
+            },
+        },
+    },
+    {
+        "name": "tail_remote_log",
+        "description": "通过 SSH 只读 tail 一个白名单远程日志文件，返回脱敏内容。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "service": {"type": "string", "description": "gateway|deviceShadow|pushService|cloudStorage|AdminService|scheduledTask"},
+                "log": {"type": "string", "description": "error|debug|stderr|stdout|sql|access", "default": "error"},
+                "tail_lines": {"type": "integer", "default": 300},
+            },
+            "required": ["service"],
+        },
+    },
+    {
+        "name": "search_remote_log",
+        "description": "通过 SSH tail 白名单远程日志后在本地搜索。keyword 为空时搜索错误类行。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "service": {"type": "string", "description": "gateway|deviceShadow|pushService|cloudStorage|AdminService|scheduledTask"},
+                "log": {"type": "string", "default": "error"},
+                "keyword": {"type": "string"},
+                "tail_lines": {"type": "integer", "default": 2000},
+                "limit": {"type": "integer", "default": 80},
+                "date": {"type": "string"},
+                "from_time": {"type": "string"},
+                "to_time": {"type": "string"},
+                "around": {"type": "string"},
+                "around_minutes": {"type": "integer", "default": 10},
+            },
+            "required": ["service"],
+        },
+    },
+    {
+        "name": "analyze_remote_service_log",
+        "description": "分析白名单远程文件日志，返回 facts + diagnosis。用于 ES 无数据或需要 stderr/stdout 补充证据。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "service": {"type": "string", "description": "gateway|deviceShadow|pushService|cloudStorage|AdminService|scheduledTask"},
+                "logs": {"type": "array", "items": {"type": "string"}, "default": ["error"]},
+                "tail_lines": {"type": "integer", "default": 800},
+                "date": {"type": "string"},
+                "from_time": {"type": "string"},
+                "to_time": {"type": "string"},
+                "around": {"type": "string"},
+                "around_minutes": {"type": "integer", "default": 10},
+            },
+            "required": ["service"],
+        },
+    },
+    {
+        "name": "diagnose_sl100_incident",
+        "description": "产品化一键排障工具：根据自然语言报障生成统一 Incident Report，内部按 ES -> remote fallback 查询。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "用户原始报障描述"},
+                "size": {"type": "integer", "default": 80},
+                "no_remote": {"type": "boolean", "default": False},
+            },
+            "required": ["query"],
+        },
+    },
 ]
 
 TOOL_FUNCTIONS = {
@@ -188,6 +530,16 @@ TOOL_FUNCTIONS = {
     "analyze_service_log": analyze_service_log,
     "go_analyze_log": go_analyze_log,
     "search_sl100_docs": search_sl100_docs,
+    "list_es_indices": list_es_indices,
+    "search_es_logs": search_es_logs,
+    "count_es_errors": count_es_errors,
+    "analyze_es_logs": analyze_es_logs,
+    "summarize_es_incident": summarize_es_incident,
+    "list_remote_log_files": list_remote_log_files,
+    "tail_remote_log": tail_remote_log,
+    "search_remote_log": search_remote_log,
+    "analyze_remote_service_log": analyze_remote_service_log,
+    "diagnose_sl100_incident": diagnose_sl100_incident,
 }
 
 
@@ -206,15 +558,26 @@ def run_agent(user_message: str, max_turns: int = 8, trace_output: str = "") -> 
     log_roots = "\n".join(str(path) for path in DEFAULT_LOG_ROOTS)
     system = f"""你是 SL100 IoT 运维诊断 Agent。
 
-你可以调用工具查看本地脱敏日志、提取时间线、搜索文档并诊断问题。
-不要要求用户提供线上服务器权限；先基于本地日志和文档判断。
+你可以调用工具查询 sl100-93 Elasticsearch 真实日志、查看本地脱敏日志、提取时间线、搜索文档并诊断问题。
+不要要求用户提供线上服务器权限；当前真实日志入口是 sl100-93 上的 Elasticsearch，只能只读查询。
 输出中文，必须给出：结论、证据、可能原因、下一步排查动作。
 
 默认日志目录：
 {log_roots}
 
+真实线上日志查询规则：
+- 对常规报障描述，优先调用 diagnose_sl100_incident 生成统一 Incident Report。
+- 用户提到“线上、服务器、阿里云、真实日志、测试同事报错、今天/昨天/某个时间点”时，优先使用 list_es_indices、count_es_errors、search_es_logs、analyze_es_logs。
+- ES 时间输入按 Asia/Shanghai 理解；如果用户说“9:20 左右”，用 around="YYYY-MM-DD 09:20"，around_minutes 默认 10。
+- 支持的 ES 服务优先是 gateway、deviceShadow、pushService、access。
+- 先 count_es_errors 或 search_es_logs 收敛范围，再 analyze_es_logs / summarize_es_incident 输出结论。
+- 所有 ES 查询结果已经脱敏；不要要求读取或保存原始日志。
+- 如果 ES 没有目标服务、结果为空、疑似有采集延迟，或用户要求查看 std_err/stdout/sql/access，才使用 list_remote_log_files、tail_remote_log、search_remote_log、analyze_remote_service_log。
+- 使用远程文件日志 fallback 时，必须沿用用户给出的 date/from_time/to_time/around 时间窗口；如果没有时间窗口，要明确说明你分析的是尾部最新日志。
+- 远程文件日志工具只允许读取白名单路径，不要尝试执行服务器命令或修改服务器。
+
 如果用户问架构或排查路径，优先调用 search_sl100_docs。
-如果用户问具体异常，优先 list_log_files -> search_errors -> analyze_service_log。
+如果用户问本地样例或明确给出本地路径，使用 list_log_files -> search_errors -> analyze_service_log。
 如果用户明确给出日志文件路径，直接调用 analyze_service_log 分析这个路径。
 """
     messages = [{"role": "user", "content": user_message}]

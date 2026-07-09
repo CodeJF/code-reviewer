@@ -13,6 +13,11 @@ from sl100_log_core import (
     render_report,
     search_docs,
 )
+from sl100_diagnose import diagnose as diagnose_product_incident
+from sl100_es import analyze_logs as analyze_es_logs
+from sl100_es import search_logs as search_es_logs
+from sl100_incident import build_incident_report, render_incident_report
+from sl100_remote import analyze_remote_logs, list_remote_logs
 
 
 SERVER_NAME = "sl100-diagnosis"
@@ -70,6 +75,83 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "search_es_logs",
+        "description": "Search redacted real SL100 logs from sl100-93 Elasticsearch.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "service": {"type": "string"},
+                "keyword": {"type": "string"},
+                "date": {"type": "string"},
+                "from_time": {"type": "string"},
+                "to_time": {"type": "string"},
+                "around": {"type": "string"},
+                "around_minutes": {"type": "integer", "default": 10},
+                "size": {"type": "integer", "default": 20},
+            },
+            "required": ["service"],
+        },
+    },
+    {
+        "name": "analyze_es_logs",
+        "description": "Analyze real SL100 logs from sl100-93 Elasticsearch and return a unified Incident Report.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "service": {"type": "string"},
+                "keyword": {"type": "string"},
+                "date": {"type": "string"},
+                "from_time": {"type": "string"},
+                "to_time": {"type": "string"},
+                "around": {"type": "string"},
+                "around_minutes": {"type": "integer", "default": 10},
+                "size": {"type": "integer", "default": 80},
+                "format": {"type": "string", "enum": ["report", "json", "both"], "default": "both"},
+            },
+            "required": ["service"],
+        },
+    },
+    {
+        "name": "summarize_es_incident",
+        "description": "Run productized natural-language SL100 diagnosis and summarize the unified Incident Report.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "size": {"type": "integer", "default": 80},
+                "format": {"type": "string", "enum": ["report", "json", "both"], "default": "both"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "list_remote_log_files",
+        "description": "List whitelisted remote SL100 service log files.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"service": {"type": "string"}},
+        },
+    },
+    {
+        "name": "analyze_remote_service_log",
+        "description": "Analyze whitelisted remote service file logs and return a unified Incident Report.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "service": {"type": "string"},
+                "logs": {"type": "array", "items": {"type": "string"}},
+                "tail_lines": {"type": "integer", "default": 800},
+                "date": {"type": "string"},
+                "from_time": {"type": "string"},
+                "to_time": {"type": "string"},
+                "around": {"type": "string"},
+                "around_minutes": {"type": "integer", "default": 10},
+                "format": {"type": "string", "enum": ["report", "json", "both"], "default": "both"},
+            },
+            "required": ["service"],
+        },
+    },
 ]
 
 
@@ -96,6 +178,14 @@ def require_paths(value: Any) -> list[str]:
     if not all(isinstance(item, str) and item.strip() for item in value):
         raise ValueError("paths must contain only non-empty strings")
     return value
+
+
+def report_result(report: dict[str, Any], output_format: str) -> dict[str, Any]:
+    if output_format == "report":
+        return text_result(render_incident_report(report))
+    if output_format == "json":
+        return text_result(json_text(report))
+    return text_result(render_incident_report(report) + "\n\nJSON:\n" + json_text(report))
 
 
 def call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -166,6 +256,64 @@ def call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
                 if len(events) >= limit:
                     return text_result(json_text(events))
         return text_result(json_text(events))
+
+    if name == "search_es_logs":
+        service = require_string(arguments.get("service"), "service")
+        result = search_es_logs(
+            service=service,
+            keyword=str(arguments.get("keyword") or ""),
+            date_text=str(arguments.get("date") or ""),
+            from_text=str(arguments.get("from_time") or ""),
+            to_text=str(arguments.get("to_time") or ""),
+            around_text=str(arguments.get("around") or ""),
+            around_minutes=int(arguments.get("around_minutes", 10)),
+            size=int(arguments.get("size", 20)),
+        )
+        return text_result(json_text(result))
+
+    if name == "analyze_es_logs":
+        service = require_string(arguments.get("service"), "service")
+        output_format = arguments.get("format", "both")
+        result = analyze_es_logs(
+            service=service,
+            keyword=str(arguments.get("keyword") or ""),
+            date_text=str(arguments.get("date") or ""),
+            from_text=str(arguments.get("from_time") or ""),
+            to_text=str(arguments.get("to_time") or ""),
+            around_text=str(arguments.get("around") or ""),
+            around_minutes=int(arguments.get("around_minutes", 10)),
+            size=int(arguments.get("size", 80)),
+            use_ai=False,
+        )
+        report = build_incident_report(query=f"{service} {arguments.get('keyword') or ''}", analysis=result)
+        return report_result(report, output_format)
+
+    if name == "summarize_es_incident":
+        query = require_string(arguments.get("query"), "query")
+        output_format = arguments.get("format", "both")
+        report = diagnose_product_incident(query, size=int(arguments.get("size", 80)))
+        return report_result(report, output_format)
+
+    if name == "list_remote_log_files":
+        service = str(arguments.get("service") or "")
+        return text_result(json_text(list_remote_logs(service)))
+
+    if name == "analyze_remote_service_log":
+        service = require_string(arguments.get("service"), "service")
+        output_format = arguments.get("format", "both")
+        result = analyze_remote_logs(
+            service=service,
+            logs=arguments.get("logs") or ["error"],
+            tail_lines=int(arguments.get("tail_lines", 800)),
+            use_ai=False,
+            date_text=str(arguments.get("date") or ""),
+            from_text=str(arguments.get("from_time") or ""),
+            to_text=str(arguments.get("to_time") or ""),
+            around_text=str(arguments.get("around") or ""),
+            around_minutes=int(arguments.get("around_minutes", 10)),
+        )
+        report = build_incident_report(query=f"{service} remote logs", analysis=result)
+        return report_result(report, output_format)
 
     raise ValueError(f"unknown tool: {name}")
 

@@ -11,6 +11,7 @@ wheels/
 
 # Secrets
 .env
+configs/sl100.local.json
 
 # IDE
 .idea/
@@ -28,5 +29,10 @@ sl100_doc_eval_results.json
 sl100_diagnosis_*.json
 sl100_facts_*.json
 sl100_docs_*.json
+sl100_es_*.json
+sl100_remote_*.json
+sl100_incident_*.json
+sl100_product_*.json
+!evals/sl100_product_cases.json
 sl100_report_*.md
 sl100_trace_*.json

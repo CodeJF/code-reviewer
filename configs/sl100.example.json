@@ -1,0 +1,45 @@
+{
+  "timezone": "Asia/Shanghai",
+  "elasticsearch": {
+    "ssh_host": "sl100-93",
+    "base_url": "http://127.0.0.1:9200",
+    "max_hits": 200,
+    "services": {
+      "gateway": "api-gateway",
+      "deviceShadow": "api-device-shadow",
+      "pushService": "api-push-service",
+      "access": "api-access"
+    }
+  },
+  "remote_logs": {
+    "gateway": {
+      "host": "sl100-115",
+      "logs": {
+        "error": "/home/work/service/gateway/log/error.log",
+        "debug": "/home/work/service/gateway/log/debug.log",
+        "access": "/home/work/service/gateway/log/access.log",
+        "sql": "/home/work/service/gateway/log/sql.log",
+        "stderr": "/home/work/service/gateway/log/std_err.log",
+        "stdout": "/home/work/service/gateway/log/srd_out.log"
+      }
+    },
+    "deviceShadow": {
+      "host": "sl100-115",
+      "logs": {
+        "error": "/home/work/service/deviceShadow/log/error.log",
+        "debug": "/home/work/service/deviceShadow/log/debug.log",
+        "stderr": "/home/work/service/deviceShadow/log/std_err.log",
+        "stdout": "/home/work/service/deviceShadow/log/srd_out.log"
+      }
+    },
+    "pushService": {
+      "host": "sl100-15",
+      "logs": {
+        "error": "/home/work/service/pushService/log/error.log",
+        "debug": "/home/work/service/pushService/log/debug.log",
+        "stderr": "/home/work/service/pushService/log/std_err.log",
+        "stdout": "/home/work/service/pushService/log/srd_out.log"
+      }
+    }
+  }
+}

@@ -1,0 +1,60 @@
+[
+  {
+    "id": "planner_websocket_time_window",
+    "type": "planner",
+    "query": "测试说 2026-07-09 上午 9 点多 deviceShadow websocket 异常",
+    "expected": {
+      "primary_service": "deviceShadow",
+      "from_time": "2026-07-09 09:00",
+      "to_time": "2026-07-09 10:00",
+      "keyword_contains": "websocket"
+    }
+  },
+  {
+    "id": "or_keyword_query",
+    "type": "or_keyword",
+    "keyword": "websocket OR error",
+    "expected": {
+      "minimum_should_match": 1,
+      "should_count": 2
+    }
+  },
+  {
+    "id": "empty_result_explains_no_hit",
+    "type": "empty_report",
+    "query": "gateway error",
+    "expected": {
+      "root_cause_contains": "未命中明确异常"
+    }
+  },
+  {
+    "id": "required_incident_report_fields",
+    "type": "required_fields",
+    "query": "deviceShadow websocket",
+    "expected": {
+      "fields": [
+        "incident_id",
+        "query",
+        "time_window",
+        "services",
+        "data_sources",
+        "evidence",
+        "timeline",
+        "root_cause",
+        "confidence",
+        "risk_level",
+        "next_actions",
+        "redaction_status"
+      ]
+    }
+  },
+  {
+    "id": "remote_fallback_time_window",
+    "type": "remote_time_window",
+    "query": "deviceShadow websocket",
+    "expected": {
+      "included": "09:20",
+      "excluded": "11:20"
+    }
+  }
+]

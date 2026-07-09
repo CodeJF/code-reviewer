@@ -66,6 +66,9 @@ DOC_DOMAIN_TERMS = [
 ]
 
 SENSITIVE_PATTERNS = [
+    (re.compile(r"(?i)(['\"]?(?:password|passwd|pwd)['\"]?\s*:\s*)['\"]?[^,'\"\s}]+['\"]?"), r'\1"<REDACTED_PASSWORD>"'),
+    (re.compile(r"(?i)(['\"]?(?:token|auth[_-]?token|access[_-]?token)['\"]?\s*:\s*)['\"]?[^,'\"\s}]+['\"]?"), r'\1"<REDACTED_TOKEN>"'),
+    (re.compile(r"(?i)(['\"]?(?:secret|access[_-]?key|access[_-]?key[_-]?secret|api[_-]?key)['\"]?\s*:\s*)['\"]?[^,'\"\s}]+['\"]?"), r'\1"<REDACTED_SECRET>"'),
     (re.compile(r"(?i)(password|passwd|pwd)\s*[:=]\s*['\"]?[^,'\"\s}]+"), r"\1=<REDACTED_PASSWORD>"),
     (re.compile(r"(?i)(token|auth[_-]?token|access[_-]?token)\s*[:=]\s*['\"]?[^,'\"\s}]+"), r"\1=<REDACTED_TOKEN>"),
     (re.compile(r"(?i)(secret|access[_-]?key|access[_-]?key[_-]?secret|api[_-]?key)\s*[:=]\s*['\"]?[^,'\"\s}]+"), r"\1=<REDACTED_SECRET>"),
@@ -131,7 +134,17 @@ INCIDENT_RULES = [
     },
     {
         "type": "websocket_failed",
-        "keywords": ["websocket send error", "websocket broken pipe", "websocket connection error", "websocket failed", "连接升级websocket失败"],
+        "keywords": [
+            "websocket send error",
+            "websocket read error",
+            "websocket broken pipe",
+            "websocket connection error",
+            "websocket failed",
+            "websocket: close",
+            "abnormal closure",
+            "客户端数据读取错误",
+            "连接升级websocket失败",
+        ],
         "services": ["deviceShadow"],
         "title": "WebSocket 连接或推送异常",
     },
@@ -333,8 +346,9 @@ def extract_log_facts(snapshots: list[LogSnapshot], max_evidence_per_rule: int =
                             "message": stripped[:500],
                         })
 
-        services[snapshot.service] = {
+        service_info = {
             "path": snapshot.path,
+            "paths": [snapshot.path],
             "line_count": snapshot.line_count,
             "level_counts": dict(counts),
             "error_count": counts["fatal"] + counts["error"],
@@ -349,6 +363,45 @@ def extract_log_facts(snapshots: list[LogSnapshot], max_evidence_per_rule: int =
             ],
             "timeline": service_timeline[:30],
         }
+        if snapshot.service in services:
+            existing = services[snapshot.service]
+            existing.setdefault("paths", [existing.get("path", "")])
+            existing["paths"].append(snapshot.path)
+            existing["line_count"] += service_info["line_count"]
+            merged_levels = Counter(existing.get("level_counts", {}))
+            merged_levels.update(service_info["level_counts"])
+            existing["level_counts"] = dict(merged_levels)
+            existing["error_count"] += service_info["error_count"]
+            existing["warning_count"] += service_info["warning_count"]
+
+            merged_errors = Counter({
+                item["message"]: item["count"]
+                for item in existing.get("top_errors", [])
+            })
+            merged_errors.update({
+                item["message"]: item["count"]
+                for item in service_info["top_errors"]
+            })
+            existing["top_errors"] = [
+                {"message": msg, "count": count}
+                for msg, count in merged_errors.most_common(8)
+            ]
+
+            merged_keywords = Counter({
+                item["keyword"]: item["count"]
+                for item in existing.get("error_keywords", [])
+            })
+            merged_keywords.update({
+                item["keyword"]: item["count"]
+                for item in service_info["error_keywords"]
+            })
+            existing["error_keywords"] = [
+                {"keyword": keyword, "count": count}
+                for keyword, count in merged_keywords.most_common(8)
+            ]
+            existing["timeline"] = (existing.get("timeline", []) + service_info["timeline"])[:30]
+        else:
+            services[snapshot.service] = service_info
 
     incidents = []
     for rule in INCIDENT_RULES:

@@ -9,6 +9,9 @@
 - **自动化评测** (`eval.py`) — 5 个 golden set 用例，验证 AI 审查质量（通过率 / 召回率）
 - **SL100 日志诊断** (`sl100_log_agent.py`) — 读取 SL100 日志，脱敏后输出结构化诊断
 - **SL100 规则分析器** (`sl100_rules.py`) — 不调用 AI，先提取错误级别、时间线、message_id、uuid 和 incident facts
+- **SL100 ES 日志查询** (`sl100_es_logs.py`) — 通过 `sl100-93` 只读查询 Elasticsearch 真实日志
+- **SL100 远程文件日志查询** (`sl100_remote_logs.py`) — 通过 SSH 只读读取白名单服务日志，作为 ES 补充数据源
+- **SL100 产品化排障 CLI** (`sl100_diagnose.py`) — 一句话报障 → 查询计划 → ES/remote 证据 → 统一排障报告
 - **SL100 Tool Use Agent** (`sl100_agent.py`) — Claude 自主调用日志和文档工具定位问题
 - **SL100 Golden Log Evals** (`eval_sl100_logs.py`) — 10 条脱敏日志用例，验证诊断覆盖率
 - **Go 日志分析服务** (`go-log-tools/`) — Go HTTP 服务解析日志，Python Agent 可调用
@@ -21,6 +24,7 @@ SL100 运维诊断 Agent 的求职包装材料：
 - [项目说明](docs/sl100-ops-agent-case-study.md)：真实问题、架构设计、关键取舍和安全策略。
 - [Demo 指南](docs/sl100-ops-agent-demo.md)：本地可复现命令、预期输出和演示顺序。
 - [面试讲稿](docs/sl100-ops-agent-interview.md)：3 分钟介绍、简历描述、常见追问和 STAR 版本。
+- [ES 日志接入](docs/sl100-es-logs.md)：真实日志系统接入、查询命令、时间窗口和安全边界。
 
 ## 快速开始
 
@@ -42,6 +46,142 @@ uv run eval.py
 ```
 
 ## SL100 真实业务工具
+
+### 产品化一键排障
+
+这是第一版真实可用产品入口。它会先生成确定性查询计划，再按 `Elasticsearch -> 远程文件日志 fallback` 查询，并输出统一 Incident Report。
+
+先看查询计划，不访问服务器：
+
+```bash
+uv run sl100_diagnose.py \
+  "测试说 2026-07-09 上午 9 点多 deviceShadow websocket 异常" \
+  --dry-run
+```
+
+执行真实排障并输出中文报告：
+
+```bash
+uv run sl100_diagnose.py \
+  "测试说 2026-07-09 上午 9 点多 deviceShadow websocket 异常"
+```
+
+保存结构化报告：
+
+```bash
+uv run sl100_diagnose.py \
+  "测试说 2026-07-09 上午 9 点多 deviceShadow websocket 异常" \
+  --json \
+  --output sl100_incident_deviceShadow_websocket.json
+```
+
+统一报告字段：
+
+```text
+incident_id / query / time_window / services / data_sources / evidence
+timeline / root_cause / confidence / risk_level / next_actions / redaction_status
+```
+
+### 配置
+
+默认配置在代码里，示例文件是：
+
+```bash
+cat configs/sl100.example.json
+```
+
+如需覆盖 host、索引或远程日志路径，复制为本地私有配置：
+
+```bash
+cp configs/sl100.example.json configs/sl100.local.json
+```
+
+`configs/sl100.local.json` 已被 `.gitignore` 忽略。也可以通过环境变量指定：
+
+```bash
+SL100_CONFIG=/path/to/sl100.local.json uv run sl100_diagnose.py "今天 gateway 有没有 error"
+```
+
+### 真实日志系统查询
+
+`sl100-93` 上运行 Elasticsearch + Kibana。真实排障优先查 ES，再按需回到服务器文件日志。
+
+检查 ES 连接：
+
+```bash
+uv run sl100_es_logs.py health
+```
+
+查看某天 SL100 日志索引：
+
+```bash
+uv run sl100_es_logs.py indices --date 2026-07-09
+```
+
+按服务、关键词、时间窗口搜索真实日志：
+
+```bash
+uv run sl100_es_logs.py search \
+  --service deviceShadow \
+  --keyword websocket \
+  --from "2026-07-09 09:00" \
+  --to "2026-07-09 10:00" \
+  --size 20
+```
+
+不调用 Claude，直接用规则层诊断 ES 日志：
+
+```bash
+uv run sl100_es_logs.py analyze \
+  --service deviceShadow \
+  --keyword websocket \
+  --from "2026-07-09 09:00" \
+  --to "2026-07-09 10:00" \
+  --output sl100_incident_es_deviceShadow.json
+```
+
+真实场景的 Agent 入口：
+
+```bash
+uv run sl100_agent.py "测试说今天上午 9 点多 deviceShadow websocket 异常，帮我查日志"
+uv run sl100_agent.py "查 gateway 最近一次 error，分析可能原因"
+```
+
+当前 ES 服务映射：
+
+```text
+gateway      -> api-gateway-YYYY-MM-DD
+deviceShadow -> api-device-shadow-YYYY-MM-DD
+pushService  -> api-push-service-YYYY-MM-DD
+access       -> api-access-YYYY-MM-DD
+```
+
+时间参数默认按 `Asia/Shanghai` 理解，查询 ES 时自动转成 UTC `@timestamp`。
+
+### 远程文件日志 fallback
+
+当 ES 没有某个服务、采集有延迟，或需要看 `std_err.log` / `srd_out.log` 时，用远程文件日志作为补充。
+
+列出白名单日志：
+
+```bash
+uv run sl100_remote_logs.py list
+```
+
+读取某个服务文件日志尾部：
+
+```bash
+uv run sl100_remote_logs.py tail --service gateway --log error --tail-lines 100
+uv run sl100_remote_logs.py tail --service pushService --log stderr --tail-lines 100
+```
+
+不调用 Claude，直接分析远程文件日志：
+
+```bash
+uv run sl100_remote_logs.py analyze --service AdminService --logs error,stderr --tail-lines 300
+```
+
+远程文件日志只允许访问代码里的白名单路径，不接受任意服务器路径。
 
 ### 本地日志诊断
 
@@ -204,6 +344,11 @@ MCP tools:
 - `search_sl100_docs`
 - `summarize_incident`
 - `find_service_errors`
+- `search_es_logs`
+- `analyze_es_logs`
+- `summarize_es_incident`
+- `list_remote_log_files`
+- `analyze_remote_service_log`
 
 Claude Desktop 配置示例：
 
@@ -237,6 +382,13 @@ code-reviewer/
 ├── sl100_log_core.py     # SL100 日志脱敏、规则分析、Claude 诊断共享核心
 ├── sl100_log_agent.py    # SL100 日志诊断 CLI
 ├── sl100_rules.py        # SL100 规则 facts 提取 CLI
+├── sl100_es.py           # sl100-93 Elasticsearch 只读查询核心
+├── sl100_es_logs.py      # Elasticsearch 日志查询 CLI
+├── sl100_remote.py       # 远程服务器文件日志只读 fallback
+├── sl100_remote_logs.py  # 远程文件日志查询 CLI
+├── sl100_planner.py      # 自然语言报障 -> 确定性查询计划
+├── sl100_incident.py     # 统一 Incident Report 和渲染
+├── sl100_diagnose.py     # 产品化一键排障 CLI
 ├── sl100_agent.py        # SL100 Tool Use Agent
 ├── eval_sl100_logs.py    # SL100 golden log evals
 ├── eval_sl100_docs.py    # SL100 docs retrieval evals

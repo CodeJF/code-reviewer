@@ -58,6 +58,11 @@ def main() -> int:
         tool_names = {tool["name"] for tool in tools["result"]["tools"]}
         require("analyze_logs" in tool_names, "analyze_logs missing")
         require("search_sl100_docs" in tool_names, "search_sl100_docs missing")
+        require("search_es_logs" in tool_names, "search_es_logs missing")
+        require("analyze_es_logs" in tool_names, "analyze_es_logs missing")
+        require("summarize_es_incident" in tool_names, "summarize_es_incident missing")
+        require("list_remote_log_files" in tool_names, "list_remote_log_files missing")
+        require("analyze_remote_service_log" in tool_names, "analyze_remote_service_log missing")
 
         analyze = send(proc, {
             "jsonrpc": "2.0",
@@ -88,6 +93,18 @@ def main() -> int:
         })
         docs_text = docs["result"]["content"][0]["text"]
         require("MQTT" in docs_text or "deviceShadow" in docs_text, "search_sl100_docs returned irrelevant content")
+
+        remote_logs = send(proc, {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+                "name": "list_remote_log_files",
+                "arguments": {"service": "gateway"},
+            },
+        })
+        remote_logs_text = remote_logs["result"]["content"][0]["text"]
+        require("sl100-115" in remote_logs_text, "list_remote_log_files did not return gateway logs")
 
         print("MCP smoke test passed")
         return 0
