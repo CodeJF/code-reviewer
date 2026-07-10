@@ -58,6 +58,19 @@ SERVICE_ALIASES = {
 SAFE_ES_PATH_RE = re.compile(r"^[A-Za-z0-9_./,*?=&-]+$")
 
 
+class ElasticsearchQueryError(RuntimeError):
+    """A safe, typed error returned by the read-only Elasticsearch client."""
+
+    def __init__(self, message: str, *, status: int | None = None, error_type: str = "") -> None:
+        super().__init__(message)
+        self.status = status
+        self.error_type = error_type
+
+
+class ElasticsearchIndexNotFound(ElasticsearchQueryError):
+    """The requested daily index does not exist and therefore cannot be queried."""
+
+
 @dataclass(frozen=True)
 class TimeWindow:
     start_local: datetime
@@ -159,7 +172,9 @@ def index_pattern_for_service(service: str, window: TimeWindow | None = None, da
         day = date.fromisoformat(date_text)
         return f"{prefix}-{day.isoformat()}"
     indices = [f"{prefix}-{day.isoformat()}" for day in _dates_for_window(window)]
-    return ",".join(indices)
+    # Daily indices can be sparse. A wildcard plus the mandatory @timestamp
+    # range is safer than failing an entire multi-day query on one missing day.
+    return indices[0] if len(indices) == 1 else f"{prefix}-*"
 
 
 def _validate_es_path(path: str) -> None:
@@ -211,11 +226,24 @@ def _ssh_curl(path: str, *, method: str = "GET", body: dict[str, Any] | None = N
     return completed.stdout
 
 
-def _parse_json_response(text: str) -> dict[str, Any]:
+def _parse_json_response(text: str) -> Any:
     try:
-        return json.loads(text)
+        data = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(f"ES 返回不是合法 JSON: {text[:300]}") from exc
+        raise ElasticsearchQueryError(f"ES 返回不是合法 JSON: {redact_text(text[:300])}") from exc
+
+    if not isinstance(data, dict) or "error" not in data:
+        return data
+
+    error = data.get("error")
+    error_type = error.get("type", "") if isinstance(error, dict) else ""
+    reason = error.get("reason", "") if isinstance(error, dict) else str(error)
+    status = data.get("status")
+    safe_reason = redact_text(str(reason))[:300]
+    message = f"ES 查询失败: {error_type or 'unknown'} {safe_reason}".strip()
+    if error_type == "index_not_found_exception" or status == 404:
+        raise ElasticsearchIndexNotFound(message, status=status, error_type=error_type)
+    raise ElasticsearchQueryError(message, status=status, error_type=error_type)
 
 
 def es_health() -> dict[str, Any]:
@@ -238,7 +266,12 @@ def list_indices(date_text: str = "", service: str = "") -> list[dict[str, Any]]
     else:
         pattern = f"api-*-{date.fromisoformat(date_text).isoformat()}" if date_text else "api-*"
     path = f"_cat/indices/{pattern}?format=json&s=index"
-    data = json.loads(_ssh_curl(path, timeout=10))
+    try:
+        data = _parse_json_response(_ssh_curl(path, timeout=10))
+    except ElasticsearchIndexNotFound:
+        return []
+    if not isinstance(data, list):
+        raise ElasticsearchQueryError("ES 索引列表返回格式异常")
     return [
         {
             "health": item.get("health"),
@@ -334,10 +367,16 @@ def search_logs(
     index_pattern = index_pattern_for_service(service_name, window=window)
     body = build_search_body(keyword=keyword, window=window, size=size)
     response = _parse_json_response(_ssh_curl(f"{index_pattern}/_search", method="POST", body=body, timeout=15))
+    if not isinstance(response, dict):
+        raise ElasticsearchQueryError("ES 搜索返回格式异常")
     hits = []
+    redaction_dropped_count = 0
     for item in response.get("hits", {}).get("hits", []):
         source = item.get("_source", {})
         message = redact_text(str(source.get("message", "")))
+        if assert_redacted(message):
+            redaction_dropped_count += 1
+            continue
         host = source.get("host") if isinstance(source.get("host"), dict) else {}
         fields = source.get("fields") if isinstance(source.get("fields"), dict) else {}
         hits.append({
@@ -355,6 +394,9 @@ def search_logs(
         "time_window": window.to_dict(),
         "total": response.get("hits", {}).get("total"),
         "hits": hits,
+        "raw_returned": len(response.get("hits", {}).get("hits", [])),
+        "redaction_dropped_count": redaction_dropped_count,
+        "source_status": "partial" if redaction_dropped_count else "ok",
     }
 
 
@@ -379,6 +421,8 @@ def count_logs(
     index_pattern = index_pattern_for_service(service_name, window=window)
     body = build_search_body(keyword=keyword, window=window, size=0)
     response = _parse_json_response(_ssh_curl(f"{index_pattern}/_count", method="POST", body={"query": body["query"]}, timeout=10))
+    if not isinstance(response, dict):
+        raise ElasticsearchQueryError("ES 计数返回格式异常")
     return {
         "service": service_name,
         "index_pattern": index_pattern,
@@ -394,7 +438,7 @@ def facts_from_es_search(search_result: dict[str, Any]) -> dict[str, Any]:
     content = redact_text("\n".join(lines))
     leaks = assert_redacted(content)
     if leaks:
-        raise RuntimeError(f"ES 日志脱敏后仍疑似包含敏感信息: {', '.join(leaks)}")
+        raise RuntimeError(f"ES 安全过滤异常: {', '.join(leaks)}")
     snapshot = LogSnapshot(
         path=f"elasticsearch://{search_result['index_pattern']}",
         service=service,
@@ -410,6 +454,13 @@ def facts_from_es_search(search_result: dict[str, Any]) -> dict[str, Any]:
         "time_window": search_result["time_window"],
         "total": search_result.get("total"),
         "returned": len(search_result.get("hits", [])),
+        "raw_returned": search_result.get("raw_returned", len(search_result.get("hits", []))),
+        "redaction_dropped_count": search_result.get("redaction_dropped_count", 0),
+        "status": (
+            "safety_blocked"
+            if not lines and search_result.get("redaction_dropped_count", 0)
+            else search_result.get("source_status", "ok")
+        ),
     }
     facts["top_messages"] = [
         {"message": message, "count": count}
