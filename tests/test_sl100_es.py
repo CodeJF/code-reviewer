@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 import sl100_es
-from sl100_log_core import redact_text
+from sl100_log_core import LogSnapshot, assert_redacted, extract_log_facts, redact_text
 
 
 class Sl100EsTests(unittest.TestCase):
@@ -28,6 +28,9 @@ class Sl100EsTests(unittest.TestCase):
             self.assertNotIn(leaked, redacted)
         for marker in ["<REDACTED_TOKEN>", "<REDACTED_SECRET>", "<UUID>", "<PHONE>", "<EMAIL>", "<IP>"]:
             self.assertIn(marker, redacted)
+
+    def test_redaction_assertion_rejects_unredacted_token_assignment(self) -> None:
+        self.assertIn("token_assignment", assert_redacted("token=secret-value"))
 
     def test_time_window_converts_shanghai_to_utc(self) -> None:
         window = sl100_es.build_time_window(
@@ -92,6 +95,45 @@ class Sl100EsTests(unittest.TestCase):
         self.assertNotIn("10.1.2.3", result["hits"][0]["message"])
         self.assertIn("<REDACTED_TOKEN>", result["hits"][0]["message"])
 
+    def test_missing_daily_index_returns_empty_list_without_crashing(self) -> None:
+        response = {
+            "error": {"type": "index_not_found_exception", "reason": "no such index"},
+            "status": 404,
+        }
+
+        with patch.object(sl100_es, "_ssh_curl", return_value=json.dumps(response)):
+            indices = sl100_es.list_indices(date_text="2026-07-09", service="gateway")
+
+        self.assertEqual(indices, [])
+
+    def test_search_raises_typed_error_instead_of_returning_false_empty_result(self) -> None:
+        response = {
+            "error": {"type": "index_not_found_exception", "reason": "no such index"},
+            "status": 404,
+        }
+
+        with patch.object(sl100_es, "_ssh_curl", return_value=json.dumps(response)):
+            with self.assertRaises(sl100_es.ElasticsearchIndexNotFound):
+                sl100_es.search_logs(service="gateway", date_text="2026-07-09")
+
+    def test_search_drops_only_unsafe_hits(self) -> None:
+        response = {
+            "hits": {
+                "total": {"value": 2, "relation": "eq"},
+                "hits": [
+                    {"_index": "api-device-shadow-2026-07-09", "_id": "safe", "_source": {"message": "info safe", "host": {}, "fields": {}}},
+                    {"_index": "api-device-shadow-2026-07-09", "_id": "unsafe", "_source": {"message": "info unsafe", "host": {}, "fields": {}}},
+                ],
+            }
+        }
+        with patch.object(sl100_es, "_ssh_curl", return_value=json.dumps(response)), \
+             patch.object(sl100_es, "assert_redacted", side_effect=[[], ["password_assignment"]]):
+            result = sl100_es.search_logs(service="deviceShadow", date_text="2026-07-09")
+
+        self.assertEqual([hit["id"] for hit in result["hits"]], ["safe"])
+        self.assertEqual(result["redaction_dropped_count"], 1)
+        self.assertEqual(result["source_status"], "partial")
+
     def test_facts_from_es_search_uses_existing_rules(self) -> None:
         search_result = {
             "service": "deviceShadow",
@@ -110,6 +152,73 @@ class Sl100EsTests(unittest.TestCase):
 
         self.assertEqual(facts["services"]["deviceShadow"]["error_count"], 1)
         self.assertIn("websocket_failed", {item["type"] for item in facts["incidents"]})
+
+    def test_normal_websocket_close_is_not_an_incident(self) -> None:
+        facts = extract_log_facts([
+            LogSnapshot(
+                path="es://deviceShadow",
+                service="deviceShadow",
+                line_count=1,
+                content='2026-07-09T09:27:21+0800 error websocket read error {"error":"websocket: close 1000 (normal): Bye"}',
+            )
+        ])
+
+        self.assertEqual(facts["error_count"], 0)
+        self.assertEqual(facts["incidents"], [])
+        self.assertEqual(facts["risk_level"], "low")
+
+    def test_debug_line_with_error_payload_is_not_counted_as_error(self) -> None:
+        facts = extract_log_facts([
+            LogSnapshot(
+                path="es://deviceShadow",
+                service="deviceShadow",
+                line_count=1,
+                content='2026-07-09T09:27:21+0800\tdebug\t客户端数据读取错误 {"error":"websocket: close 1006 (abnormal closure)"}',
+            )
+        ])
+
+        self.assertEqual(facts["services"]["deviceShadow"]["level_counts"]["debug"], 1)
+        self.assertEqual(facts["error_count"], 0)
+        incident = next(item for item in facts["incidents"] if item["type"] == "websocket_failed")
+        self.assertEqual(incident["risk_level"], "medium")
+
+    def test_gateway_wrongpass_is_database_connection_failure_at_medium_risk(self) -> None:
+        facts = extract_log_facts([
+            LogSnapshot(
+                path="es://gateway",
+                service="gateway",
+                line_count=1,
+                content='2026-06-15T16:28:29.557+0800 error {"error":"WRONGPASS invalid username-password pair"}',
+            )
+        ])
+
+        self.assertEqual({item["type"] for item in facts["incidents"]}, {"database_connection_failed"})
+        self.assertEqual(facts["risk_level"], "medium")
+
+    def test_gateway_payload_type_mismatch_is_classified(self) -> None:
+        facts = extract_log_facts([
+            LogSnapshot(
+                path="es://gateway",
+                service="gateway",
+                line_count=1,
+                content='2026-06-15T09:20:27.501+0800 error decoding key payload: cannot decode string into a map[string]interface {}',
+            )
+        ])
+
+        self.assertEqual({item["type"] for item in facts["incidents"]}, {"payload_type_mismatch"})
+        self.assertEqual(facts["risk_level"], "medium")
+
+    def test_single_online_or_offline_event_is_not_flapping(self) -> None:
+        facts = extract_log_facts([
+            LogSnapshot(
+                path="es://deviceShadow",
+                service="deviceShadow",
+                line_count=1,
+                content="2026-07-09T09:20:00+0800 info device mqtt offline subscribe uuid=device-001",
+            )
+        ])
+
+        self.assertNotIn("device_online_offline_flapping", {item["type"] for item in facts["incidents"]})
 
 
 if __name__ == "__main__":

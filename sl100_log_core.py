@@ -81,7 +81,7 @@ SENSITIVE_PATTERNS = [
 ]
 
 TIMESTAMP_RE = re.compile(
-    r"(?P<ts>\d{4}[-/]\d{2}[-/]\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)"
+    r"(?P<ts>\d{4}[-/]\d{2}[-/]\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)"
 )
 MESSAGE_ID_RE = re.compile(r"(?i)\b(?:message[_-]?id|msg[_-]?id|request[_-]?id)\b[\"'=:\s]+(?P<id>[A-Za-z0-9_-]{6,})")
 UUID_RE = re.compile(r"(?i)\b(?:uuid|device[_-]?id|sn)\b[\"'=:\s]+(?P<id>[A-Za-z0-9_-]{6,})")
@@ -111,6 +111,7 @@ INCIDENT_RULES = [
     {
         "type": "device_online_offline_flapping",
         "keywords": ["device mqtt online", "device mqtt offline", "connected", "disconnected"],
+        "min_evidence": 3,
         "services": ["deviceShadow"],
         "title": "设备上下线频繁",
     },
@@ -157,11 +158,17 @@ INCIDENT_RULES = [
     {
         "type": "database_connection_failed",
         "keyword_groups": [
-            ["mysql", "mongo", "mongodb", "redis"],
-            ["connection error", "ping error", "conn error", "connect refused", "connection refused", "dial tcp", "noauth", "authentication required"],
+            ["mysql", "mongo", "mongodb", "redis", "wrongpass"],
+            ["connection error", "ping error", "conn error", "connect refused", "connection refused", "dial tcp", "noauth", "authentication required", "wrongpass"],
         ],
         "services": ["gateway", "deviceShadow", "pushService", "AdminService", "cloudStorage"],
         "title": "数据库或缓存连接失败",
+    },
+    {
+        "type": "payload_type_mismatch",
+        "all_keywords": ["error decoding key payload", "cannot decode string into a map"],
+        "services": ["gateway"],
+        "title": "Payload 数据类型不匹配",
     },
 ]
 
@@ -198,8 +205,9 @@ def assert_redacted(text: str) -> list[str]:
         ("phone", re.compile(r"\b1[3-9]\d{9}\b")),
         ("email", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")),
         ("anthropic_key", re.compile(r"sk-ant-api\d{2}-[A-Za-z0-9_-]+")),
-        ("password_assignment", re.compile(r"(?i)(password|passwd|pwd)\s*[:=]\s*[^,\s}]+")),
-        ("secret_assignment", re.compile(r"(?i)(secret|access[_-]?key|api[_-]?key)\s*[:=]\s*[^,\s}]+")),
+        ("token_assignment", re.compile(r"(?i)(token|auth[_-]?token|access[_-]?token)\s*[:=]\s*(?![\[{]|[\"']?<REDACTED_)[^,\s}]+")),
+        ("password_assignment", re.compile(r"(?i)(password|passwd|pwd)\s*[:=]\s*(?![\[\{]|[\"']?<REDACTED_)[^,\s}]+")),
+        ("secret_assignment", re.compile(r"(?i)(secret|access[_-]?key|api[_-]?key)\s*[:=]\s*(?![\[\{]|[\"']?<REDACTED_)[^,\s}]+")),
     ]
     for name, pattern in checks:
         if pattern.search(text):
@@ -252,7 +260,27 @@ def list_log_files(root: str | None = None) -> list[str]:
     return sorted(set(files))
 
 
+def _is_normal_websocket_close(line: str) -> bool:
+    lower = line.lower()
+    return (
+        "websocket: close 1000" in lower
+        or "websocket: close 1001" in lower
+        or bool(re.search(r"\bnormal closure\b", lower))
+    )
+
+
 def _line_level(line: str) -> str:
+    if _is_normal_websocket_close(line):
+        return "info"
+
+    timestamp = TIMESTAMP_RE.search(line)
+    if timestamp:
+        level = re.match(r"\s*(?:\t|\s)*(debug|info|warn|warning|error|fatal|panic)\b", line[timestamp.end():], re.IGNORECASE)
+        if level:
+            normalized = level.group(1).lower()
+            if normalized == "warn":
+                return "warning"
+            return normalized
     if re.search(r"(?i)\b(fatal|panic)\b", line):
         return "fatal"
     if ERROR_RE.search(line):
@@ -267,6 +295,8 @@ def _rule_matches(rule: dict[str, Any], service: str, line: str) -> bool:
         return False
 
     lower = line.lower()
+    if rule["type"] == "websocket_failed" and _is_normal_websocket_close(lower):
+        return False
     required_keywords = rule.get("all_keywords", [])
     if any(keyword.lower() not in lower for keyword in required_keywords):
         return False
@@ -406,9 +436,17 @@ def extract_log_facts(snapshots: list[LogSnapshot], max_evidence_per_rule: int =
     incidents = []
     for rule in INCIDENT_RULES:
         evidence = incident_hits.get(rule["type"], [])
-        if not evidence:
+        if len(evidence) < int(rule.get("min_evidence", 1)):
             continue
-        severity = "high" if any(e["level"] in {"fatal", "error"} for e in evidence) else "medium"
+        error_evidence = [item for item in evidence if item["level"] == "error"]
+        fatal_evidence = [item for item in evidence if item["level"] in {"fatal", "panic"}]
+        severity = "medium"
+        if fatal_evidence:
+            severity = "high"
+        elif rule["type"] == "config_init_failed" and error_evidence:
+            severity = "high"
+        elif len(error_evidence) >= 3:
+            severity = "high"
         incidents.append({
             "type": rule["type"],
             "title": rule["title"],
@@ -419,7 +457,7 @@ def extract_log_facts(snapshots: list[LogSnapshot], max_evidence_per_rule: int =
 
     risk_level = "low"
     total_errors = sum(s["error_count"] for s in services.values())
-    if any(i["risk_level"] == "high" for i in incidents) or total_errors >= 5:
+    if any(i["risk_level"] == "high" for i in incidents):
         risk_level = "high"
     elif incidents or total_errors > 0:
         risk_level = "medium"
@@ -455,6 +493,7 @@ def local_diagnosis(facts: dict[str, Any]) -> dict[str, Any]:
             "websocket_failed": ["检查 deviceShadow WebSocket 连接保存、用户 token 和客户端连接状态。"],
             "config_init_failed": ["检查 env.yaml、工作目录、外部依赖配置和启动参数。"],
             "database_connection_failed": ["检查 MySQL/MongoDB/Redis 地址、隧道、账号和服务健康状态。"],
+            "payload_type_mismatch": ["核对写入 payload 的数据结构；gateway 当前需要对象/map，不能传入字符串。"],
         }.get(incident_type, ["结合证据日志确认上游请求、依赖服务和配置是否一致。"])
         incidents.append({
             "type": incident_type,
