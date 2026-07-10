@@ -12,6 +12,9 @@ wheels/
 # Secrets
 .env
 configs/sl100.local.json
+deploy/.env
+deploy/secrets/
+.team/
 
 # IDE
 .idea/
