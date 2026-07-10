@@ -1,0 +1,79 @@
+name: sl100-team
+
+x-app: &app
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  env_file: ${RUNTIME_ENV_FILE:-.env}
+  environment:
+    DATABASE_URL: postgresql+psycopg://sl100:${POSTGRES_PASSWORD}@postgres:5432/sl100_team
+    REDIS_URL: redis://redis:6379/0
+    SL100_CONFIG: /run/secrets/sl100.local.json
+  volumes:
+    - ${SL100_SECRET_DIR:?Set SL100_SECRET_DIR in deploy/.env}/sl100.local.json:/run/secrets/sl100.local.json:ro
+    - ${SL100_SECRET_DIR:?Set SL100_SECRET_DIR in deploy/.env}/ssh:/home/app/.ssh:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: sl100_team
+      POSTGRES_USER: sl100
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sl100 -d sl100_team"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    <<: *app
+
+  worker:
+    <<: *app
+    command: ["uv", "run", "python", "-m", "team_app.worker"]
+
+  maintenance:
+    <<: *app
+    command: ["/bin/sh", "-c", "while true; do uv run python -m team_app.maintenance; sleep 86400; done"]
+
+  caddy:
+    image: caddy:2.8-alpine
+    env_file: ${RUNTIME_ENV_FILE:-.env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
