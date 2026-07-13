@@ -1,10 +1,14 @@
 FROM python:3.13-slim AS runtime
 
 ARG APP_VERSION=local
+ARG PIP_INDEX_URL=https://pypi.org/simple
+ARG UV_DEFAULT_INDEX=https://pypi.org/simple
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_LINK_MODE=copy \
+    UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX} \
+    PIP_INDEX_URL=${PIP_INDEX_URL} \
     HOME=/home/app \
     APP_VERSION=${APP_VERSION}
 

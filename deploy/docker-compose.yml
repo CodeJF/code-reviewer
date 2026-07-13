@@ -7,6 +7,8 @@ x-app: &app
     dockerfile: deploy/Dockerfile
     args:
       APP_VERSION: ${APP_VERSION:-local}
+      PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+      UV_DEFAULT_INDEX: ${UV_DEFAULT_INDEX:-https://pypi.org/simple}
   env_file: ${RUNTIME_ENV_FILE:-.env}
   environment:
     DATABASE_URL: postgresql+psycopg://sl100:${POSTGRES_PASSWORD}@postgres:5432/sl100_team

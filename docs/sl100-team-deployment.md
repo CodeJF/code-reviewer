@@ -99,7 +99,7 @@ docker network ls --filter name=sl100-dev --filter name=sl100-prod
 git clone git@github.com:CodeJF/code-reviewer.git /opt/sl100-diagnosis
 cd /opt/sl100-diagnosis
 cp deploy/.env.example deploy/.env
-mkdir -p secrets/ssh
+mkdir -p /opt/sl100-secrets/ssh
 chmod 600 deploy/.env
 ```
 
@@ -110,16 +110,25 @@ chmod 600 deploy/.env
 - 长随机 `POSTGRES_PASSWORD`
 - 不少于 32 个随机字符的 `SESSION_SECRET`
 - `AUTH_MODE=local`
-- `SL100_SECRET_DIR=/opt/sl100-diagnosis/secrets`
+- `SL100_SECRET_DIR=/opt/sl100-secrets`
+
+如果服务器访问官方 PyPI 较慢，可以仅在服务器的 `deploy/.env` 中配置区域镜像，镜像地址会作为 Docker 构建参数传入，不影响依赖锁定版本：
+
+```dotenv
+PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
+UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
+```
 
 不要把 `deploy/.env`、日志源配置、SSH 私钥或备份提交到 Git。
 
-把团队诊断使用的 `sl100.local.json` 放到 `/opt/sl100-diagnosis/secrets/`。SSH 文件需要允许容器内 UID `10001` 读取。当前可先使用 root 的只读日志凭据，稳定后应替换为权限受限的诊断账号。
+把团队诊断使用的 `sl100.local.json` 放到仓库外的 `/opt/sl100-secrets/`，避免密钥文件污染 Git 工作区。SSH 文件需要允许容器内 UID `10001` 读取。当前可先使用 root 的只读日志凭据，稳定后应替换为权限受限的诊断账号。
 
 ```bash
-chown -R 10001:10001 /opt/sl100-diagnosis/secrets/ssh
-chmod 700 /opt/sl100-diagnosis/secrets/ssh
-chmod 600 /opt/sl100-diagnosis/secrets/ssh/*
+chown root:10001 /opt/sl100-secrets
+chmod 750 /opt/sl100-secrets
+chown -R 10001:10001 /opt/sl100-secrets/ssh
+chmod 700 /opt/sl100-secrets/ssh
+find /opt/sl100-secrets/ssh -type f -exec chmod 600 {} +
 ```
 
 确认阿里云安全组和服务器防火墙只对公网开放 80、443 和必要的 SSH 管理入口。PostgreSQL、Redis 与 API 不直接开放公网端口。
