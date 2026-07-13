@@ -29,7 +29,18 @@ RUN sed -i \
 
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv venv .venv \
+    && uv export \
+        --frozen \
+        --no-dev \
+        --no-emit-project \
+        --format requirements.txt \
+        --output-file /tmp/requirements.txt >/dev/null \
+    && uv pip sync \
+        --python .venv/bin/python \
+        --require-hashes \
+        /tmp/requirements.txt \
+    && rm -f /tmp/requirements.txt
 COPY . .
 RUN uv sync --frozen --no-dev
 RUN chown -R app:app /app /home/app
