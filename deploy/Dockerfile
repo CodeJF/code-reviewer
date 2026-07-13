@@ -1,6 +1,9 @@
-FROM python:3.13-slim AS runtime
+ARG PYTHON_IMAGE=python:3.13-slim
+FROM ${PYTHON_IMAGE} AS runtime
 
 ARG APP_VERSION=local
+ARG APT_DEBIAN_MIRROR=http://deb.debian.org/debian
+ARG APT_SECURITY_MIRROR=http://deb.debian.org/debian-security
 ARG PIP_INDEX_URL=https://pypi.org/simple
 ARG UV_DEFAULT_INDEX=https://pypi.org/simple
 
@@ -14,7 +17,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 LABEL org.opencontainers.image.revision="${APP_VERSION}"
 
-RUN useradd --create-home --uid 10001 app \
+RUN sed -i \
+        -e "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
+        -e "s|http://deb.debian.org/debian|${APT_DEBIAN_MIRROR}|g" \
+        /etc/apt/sources.list.d/debian.sources \
+    && useradd --create-home --uid 10001 app \
     && apt-get update \
     && apt-get install --no-install-recommends -y openssh-client curl \
     && rm -rf /var/lib/apt/lists/* \

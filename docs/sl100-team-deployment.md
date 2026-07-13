@@ -112,9 +112,15 @@ chmod 600 deploy/.env
 - `AUTH_MODE=local`
 - `SL100_SECRET_DIR=/opt/sl100-secrets`
 
-如果服务器访问官方 PyPI 较慢，可以仅在服务器的 `deploy/.env` 中配置区域镜像，镜像地址会作为 Docker 构建参数传入，不影响依赖锁定版本：
+如果服务器访问 Docker Hub、Debian 或官方 PyPI 较慢，可以仅在服务器的 `deploy/.env` 中配置区域镜像。镜像地址会作为 Compose 镜像名或 Docker 构建参数传入，不影响依赖锁定版本：
 
 ```dotenv
+PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.13-slim
+POSTGRES_IMAGE=docker.m.daocloud.io/library/postgres:16-alpine
+REDIS_IMAGE=docker.m.daocloud.io/library/redis:7-alpine
+CADDY_IMAGE=docker.m.daocloud.io/library/caddy:2.10-alpine
+APT_DEBIAN_MIRROR=https://mirrors.aliyun.com/debian
+APT_SECURITY_MIRROR=https://mirrors.aliyun.com/debian-security
 PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
 UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
 ```

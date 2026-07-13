@@ -7,6 +7,9 @@ x-app: &app
     dockerfile: deploy/Dockerfile
     args:
       APP_VERSION: ${APP_VERSION:-local}
+      PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.13-slim}
+      APT_DEBIAN_MIRROR: ${APT_DEBIAN_MIRROR:-http://deb.debian.org/debian}
+      APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-http://deb.debian.org/debian-security}
       PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
       UV_DEFAULT_INDEX: ${UV_DEFAULT_INDEX:-https://pypi.org/simple}
   env_file: ${RUNTIME_ENV_FILE:-.env}
@@ -27,7 +30,7 @@ x-app: &app
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
     environment:
       POSTGRES_DB: sl100_team
       POSTGRES_USER: sl100
@@ -42,7 +45,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: ${REDIS_IMAGE:-redis:7-alpine}
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     volumes:
       - redis_data:/data
@@ -75,7 +78,7 @@ services:
     command: ["/bin/sh", "-c", "while true; do uv run python -m team_app.maintenance; sleep 86400; done"]
 
   backup:
-    image: postgres:16-alpine
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
     environment:
       PGHOST: postgres
       PGDATABASE: sl100_team
@@ -92,7 +95,7 @@ services:
     restart: unless-stopped
 
   caddy:
-    image: caddy:2.10-alpine
+    image: ${CADDY_IMAGE:-caddy:2.10-alpine}
     env_file: ${RUNTIME_ENV_FILE:-.env}
     ports:
       - "80:80"
