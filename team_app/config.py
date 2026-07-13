@@ -9,10 +9,6 @@ import os
 from dataclasses import dataclass
 
 
-def _csv(name: str) -> set[str]:
-    return {item.strip() for item in os.environ.get(name, "").split(",") if item.strip()}
-
-
 @dataclass(frozen=True)
 class TeamSettings:
     app_env: str = "development"
@@ -21,12 +17,15 @@ class TeamSettings:
     redis_url: str = "redis://127.0.0.1:6379/0"
     session_secret: str = "development-only-change-me"
     auth_mode: str = "dev"
-    oidc_discovery_url: str = ""
-    oidc_client_id: str = ""
-    oidc_client_secret: str = ""
-    oidc_groups_claim: str = "groups"
-    admin_groups: frozenset[str] = frozenset()
-    oncall_groups: frozenset[str] = frozenset()
+    session_cookie_name: str = "sl100_session"
+    session_ttl_seconds: int = 8 * 60 * 60
+    invite_ttl_hours: int = 24
+    reset_ttl_minutes: int = 30
+    login_failure_limit: int = 5
+    login_lock_minutes: int = 15
+    diagnosis_rate_limit: int = 10
+    diagnosis_rate_window_seconds: int = 10 * 60
+    diagnosis_max_active: int = 3
     feishu_webhook_url: str = ""
     diagnosis_ttl_days: int = 90
     audit_ttl_days: int = 365
@@ -40,12 +39,15 @@ class TeamSettings:
             redis_url=os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0"),
             session_secret=os.environ.get("SESSION_SECRET", "development-only-change-me"),
             auth_mode=os.environ.get("AUTH_MODE", "dev").lower(),
-            oidc_discovery_url=os.environ.get("OIDC_DISCOVERY_URL", ""),
-            oidc_client_id=os.environ.get("OIDC_CLIENT_ID", ""),
-            oidc_client_secret=os.environ.get("OIDC_CLIENT_SECRET", ""),
-            oidc_groups_claim=os.environ.get("OIDC_GROUPS_CLAIM", "groups"),
-            admin_groups=frozenset(_csv("OIDC_ADMIN_GROUPS")),
-            oncall_groups=frozenset(_csv("OIDC_ONCALL_GROUPS")),
+            session_cookie_name=os.environ.get("SESSION_COOKIE_NAME", "sl100_session"),
+            session_ttl_seconds=int(os.environ.get("SESSION_TTL_SECONDS", str(8 * 60 * 60))),
+            invite_ttl_hours=int(os.environ.get("INVITE_TTL_HOURS", "24")),
+            reset_ttl_minutes=int(os.environ.get("RESET_TTL_MINUTES", "30")),
+            login_failure_limit=int(os.environ.get("LOGIN_FAILURE_LIMIT", "5")),
+            login_lock_minutes=int(os.environ.get("LOGIN_LOCK_MINUTES", "15")),
+            diagnosis_rate_limit=int(os.environ.get("DIAGNOSIS_RATE_LIMIT", "10")),
+            diagnosis_rate_window_seconds=int(os.environ.get("DIAGNOSIS_RATE_WINDOW_SECONDS", "600")),
+            diagnosis_max_active=int(os.environ.get("DIAGNOSIS_MAX_ACTIVE", "3")),
             feishu_webhook_url=os.environ.get("FEISHU_WEBHOOK_URL", ""),
             diagnosis_ttl_days=int(os.environ.get("DIAGNOSIS_TTL_DAYS", "90")),
             audit_ttl_days=int(os.environ.get("AUDIT_TTL_DAYS", "365")),
@@ -56,19 +58,20 @@ class TeamSettings:
         return self.app_env.lower() == "production"
 
     def validate_runtime(self) -> None:
-        if self.auth_mode not in {"dev", "oidc"}:
-            raise ValueError("AUTH_MODE must be dev or oidc")
+        if self.auth_mode not in {"dev", "local"}:
+            raise ValueError("AUTH_MODE must be dev or local")
         if not self.is_production:
             return
-        if self.auth_mode != "oidc":
-            raise ValueError("production requires AUTH_MODE=oidc")
+        if self.auth_mode != "local":
+            raise ValueError("production requires AUTH_MODE=local")
         if not self.app_url.startswith("https://"):
             raise ValueError("production requires an HTTPS APP_URL")
+        if not self.database_url.startswith("postgresql+"):
+            raise ValueError("production requires PostgreSQL DATABASE_URL")
+        if not self.redis_url.startswith("redis://"):
+            raise ValueError("production requires Redis REDIS_URL")
         required = {
-            "SESSION_SECRET": self.session_secret != "development-only-change-me",
-            "OIDC_DISCOVERY_URL": bool(self.oidc_discovery_url),
-            "OIDC_CLIENT_ID": bool(self.oidc_client_id),
-            "OIDC_CLIENT_SECRET": bool(self.oidc_client_secret),
+            "SESSION_SECRET": self.session_secret != "development-only-change-me" and len(self.session_secret) >= 32,
         }
         missing = [name for name, configured in required.items() if not configured]
         if missing:

@@ -1,14 +1,18 @@
-name: sl100-team
+name: ${COMPOSE_PROJECT_NAME:-sl100-prod}
 
 x-app: &app
+  image: sl100-team:${APP_VERSION:-local}
   build:
     context: ..
     dockerfile: deploy/Dockerfile
+    args:
+      APP_VERSION: ${APP_VERSION:-local}
   env_file: ${RUNTIME_ENV_FILE:-.env}
   environment:
     DATABASE_URL: postgresql+psycopg://sl100:${POSTGRES_PASSWORD}@postgres:5432/sl100_team
     REDIS_URL: redis://redis:6379/0
     SL100_CONFIG: /run/secrets/sl100.local.json
+    APP_VERSION: ${APP_VERSION:-local}
   volumes:
     - ${SL100_SECRET_DIR:?Set SL100_SECRET_DIR in deploy/.env}/sl100.local.json:/run/secrets/sl100.local.json:ro
     - ${SL100_SECRET_DIR:?Set SL100_SECRET_DIR in deploy/.env}/ssh:/home/app/.ssh:ro
@@ -30,36 +34,63 @@ services:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sl100 -d sl100_team"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
     restart: unless-stopped
 
   api:
     <<: *app
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8000/api/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
 
   worker:
     <<: *app
     command: ["uv", "run", "python", "-m", "team_app.worker"]
 
+  reconciler:
+    <<: *app
+    command: ["uv", "run", "python", "-m", "team_app.reconciler"]
+
   maintenance:
     <<: *app
     command: ["/bin/sh", "-c", "while true; do uv run python -m team_app.maintenance; sleep 86400; done"]
 
+  backup:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: postgres
+      PGDATABASE: sl100_team
+      PGUSER: sl100
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - backup_data:/backups
+      - ./backup.sh:/opt/sl100/backup.sh:ro
+    command: ["sh", "/opt/sl100/backup.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   caddy:
-    image: caddy:2.8-alpine
+    image: caddy:2.10-alpine
     env_file: ${RUNTIME_ENV_FILE:-.env}
     ports:
       - "80:80"
@@ -69,11 +100,13 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   postgres_data:
   redis_data:
+  backup_data:
   caddy_data:
   caddy_config:

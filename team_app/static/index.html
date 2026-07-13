@@ -4,19 +4,19 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#08111f" />
-    <title>SL100 · 值班指挥台</title>
+    <title>SL100 · 团队值班指挥台</title>
     <link rel="stylesheet" href="/assets/app.css" />
   </head>
   <body>
-    <div class="grain"></div>
+    <div class="grain" aria-hidden="true"></div>
     <main class="shell">
       <header class="topbar">
-        <a class="brand" href="#top" aria-label="SL100 值班指挥台主页">
+        <a class="brand" href="#top" aria-label="SL100 团队值班指挥台主页">
           <span class="brand-mark">S</span>
           <span><strong>SL100</strong><small>OPS COMMAND</small></span>
         </a>
         <div class="system-signal"><i></i> LOG PIPELINE · GUARDED</div>
-        <div id="identity" class="identity"><a href="/api/auth/login">登录工作台 ↗</a></div>
+        <div id="identity" class="identity"><span>正在确认登录状态…</span></div>
       </header>
 
       <section id="top" class="hero">
@@ -36,15 +36,18 @@
         <aside class="rail">
           <button class="nav-button active" data-view="board">指挥台 <span>⌘1</span></button>
           <button class="nav-button" data-view="diagnoses">诊断记录 <span>⌘2</span></button>
-          <div class="rail-note"><b>数据边界</b><p>不保存原始日志。脱敏报告与评论 90 天后自动清除。</p></div>
+          <button class="nav-button admin-only hidden" data-view="members">成员管理 <span>⌘3</span></button>
+          <button class="nav-button" id="account-settings">修改密码 <span>↗</span></button>
+          <div class="rail-note"><b>数据边界</b><p>不保存原始日志。脱敏报告与评论保留 90 天，审计记录保留 365 天。</p></div>
         </aside>
 
         <section class="board view active" id="view-board">
-          <div class="command-card">
+          <div id="notification-banner" class="notice hidden"></div>
+          <div class="command-card operator-only">
             <div class="section-label">发起诊断 <span>READ-ONLY QUERY</span></div>
             <form id="diagnosis-form">
               <label for="query">发生了什么？</label>
-              <textarea id="query" name="query" rows="3" placeholder="例如：测试说今天上午 9 点 deviceShadow websocket 异常" required></textarea>
+              <textarea id="query" name="query" rows="3" placeholder="例如：今天上午 9 点 deviceShadow websocket 异常" required></textarea>
               <div class="command-actions">
                 <label class="toggle"><input type="checkbox" id="no-remote" /> <span></span>仅查 Elasticsearch</label>
                 <button class="primary" type="submit">启动诊断 <b>→</b></button>
@@ -53,18 +56,72 @@
             <p id="form-message" class="form-message" role="status"></p>
           </div>
 
-          <div class="board-header"><div><p class="section-label">活跃事件</p><h2>值班队列</h2></div><span id="incident-count" class="counter">0</span></div>
+          <div class="board-header"><div><p class="section-label">团队事件</p><h2>值班队列</h2></div><span id="incident-count" class="counter">0</span></div>
+          <form id="incident-filters" class="filters">
+            <select name="status" aria-label="按状态筛选"><option value="">全部状态</option><option value="open">待处理</option><option value="investigating">排查中</option><option value="mitigated">已缓解</option><option value="resolved">已解决</option></select>
+            <input name="service" aria-label="按服务筛选" placeholder="服务名" />
+            <select name="assignee_id" id="assignee-filter" aria-label="按负责人筛选"><option value="">全部负责人</option></select>
+            <button class="secondary" type="submit">筛选</button>
+          </form>
           <div id="incident-list" class="incident-list"><div class="empty-state">正在读取值班队列…</div></div>
         </section>
 
         <section class="diagnoses view" id="view-diagnoses">
-          <div class="board-header"><div><p class="section-label">最近 50 条</p><h2>诊断记录</h2></div></div>
+          <div class="board-header"><div><p class="section-label">诊断历史</p><h2>最近记录</h2></div></div>
+          <form id="diagnosis-filters" class="filters">
+            <select name="status" aria-label="按诊断状态筛选"><option value="">全部状态</option><option value="queued">排队中</option><option value="running">执行中</option><option value="completed">已完成</option><option value="failed">失败</option></select>
+            <button class="secondary" type="submit">筛选</button>
+          </form>
           <div id="diagnosis-list" class="diagnosis-list"></div>
+        </section>
+
+        <section class="members view" id="view-members">
+          <div class="board-header"><div><p class="section-label">仅管理员</p><h2>成员与权限</h2></div></div>
+          <div class="member-layout">
+            <form id="invite-form" class="panel-form">
+              <p class="section-label">邀请新成员</p>
+              <label>用户名<input name="username" required minlength="3" maxlength="64" placeholder="例如 zhangsan" /></label>
+              <label>显示名称<input name="display_name" required maxlength="255" placeholder="例如 张三" /></label>
+              <label>角色<select name="role"><option value="oncall">值班</option><option value="viewer">只读</option><option value="admin">管理员</option></select></label>
+              <button class="primary" type="submit">生成一次性邀请 <b>→</b></button>
+              <p class="form-message" id="invite-message" role="status"></p>
+            </form>
+            <div class="members-panel"><p class="section-label">当前成员</p><div id="member-list" class="member-list"></div></div>
+          </div>
         </section>
       </section>
 
-      <section id="login-state" class="login-state">
-        <div class="login-card"><p class="eyebrow">CONTROLLED ACCESS</p><h2>团队值班，从受控入口开始。</h2><p>使用公司账号登录后，按角色获得只读、值班或配置权限。</p><a class="primary link-button" href="/api/auth/login">使用企业账号登录 <b>→</b></a></div>
+      <section id="login-state" class="login-state hidden">
+        <div class="login-card auth-card" id="login-panel">
+          <p class="eyebrow">CONTROLLED ACCESS</p><h2>进入团队值班台。</h2>
+          <p>使用管理员分配的本地账号登录。连续失败 5 次会锁定 15 分钟。</p>
+          <form id="login-form" class="auth-form">
+            <label>用户名<input name="username" autocomplete="username" required /></label>
+            <label>密码<input name="password" type="password" autocomplete="current-password" required /></label>
+            <button class="primary" type="submit">登录 <b>→</b></button>
+            <p class="form-message" role="status"></p>
+          </form>
+        </div>
+        <div class="login-card auth-card hidden" id="activation-panel">
+          <p class="eyebrow">ONE-TIME INVITATION</p><h2>激活团队账号。</h2>
+          <p>请设置 12～128 个字符的长口令。邀请链接仅可使用一次。</p>
+          <form id="activation-form" class="auth-form">
+            <label>新密码<input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password" required /></label>
+            <label>确认新密码<input name="confirmation" type="password" minlength="12" maxlength="128" autocomplete="new-password" required /></label>
+            <button class="primary" type="submit">激活账号 <b>→</b></button>
+            <p class="form-message" role="status"></p>
+          </form>
+        </div>
+        <div class="login-card auth-card hidden" id="reset-panel">
+          <p class="eyebrow">PASSWORD RESET</p><h2>设置新密码。</h2>
+          <p>重置后，其他设备上的旧登录状态将立即失效。</p>
+          <form id="reset-form" class="auth-form">
+            <label>新密码<input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password" required /></label>
+            <label>确认新密码<input name="confirmation" type="password" minlength="12" maxlength="128" autocomplete="new-password" required /></label>
+            <button class="primary" type="submit">重置密码 <b>→</b></button>
+            <p class="form-message" role="status"></p>
+          </form>
+        </div>
       </section>
     </main>
 
@@ -72,6 +129,17 @@
       <button class="dialog-close" aria-label="关闭详情">×</button>
       <div id="incident-detail"></div>
     </dialog>
+    <dialog id="account-dialog" class="incident-dialog compact-dialog">
+      <button class="account-close dialog-close" aria-label="关闭">×</button>
+      <form id="password-form" class="detail auth-form">
+        <p class="eyebrow">ACCOUNT SECURITY</p><h2>修改密码</h2>
+        <label>当前密码<input name="current_password" type="password" autocomplete="current-password" required /></label>
+        <label>新密码<input name="new_password" type="password" minlength="12" maxlength="128" autocomplete="new-password" required /></label>
+        <button class="primary" type="submit">保存并退出所有设备 <b>→</b></button>
+        <p class="form-message" role="status"></p>
+      </form>
+    </dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script src="/assets/app.js" defer></script>
   </body>
 </html>

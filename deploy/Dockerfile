@@ -1,9 +1,14 @@
 FROM python:3.13-slim AS runtime
 
+ARG APP_VERSION=local
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_LINK_MODE=copy \
-    HOME=/home/app
+    HOME=/home/app \
+    APP_VERSION=${APP_VERSION}
+
+LABEL org.opencontainers.image.revision="${APP_VERSION}"
 
 RUN useradd --create-home --uid 10001 app \
     && apt-get update \
@@ -16,7 +21,8 @@ COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY . .
 RUN uv sync --frozen --no-dev
+RUN chown -R app:app /app /home/app
 
 USER app
 EXPOSE 8000
-CMD ["uv", "run", "uvicorn", "team_app.api:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+CMD ["uv", "run", "uvicorn", "team_app.api:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]

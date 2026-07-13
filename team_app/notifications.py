@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import urllib.request
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -28,6 +29,8 @@ def feishu_payload(incident: Incident, *, event_type: str, app_url: str) -> dict
 def deliver_feishu(session: Session, *, settings: TeamSettings, delivery: NotificationDelivery, incident: Incident) -> None:
     if not settings.feishu_webhook_url:
         delivery.status = "skipped"
+        delivery.error_text = "飞书通知未启用"
+        delivery.next_attempt_at = None
         session.commit()
         return
     body = json.dumps(feishu_payload(incident, event_type=delivery.event_type, app_url=settings.app_url), ensure_ascii=False).encode("utf-8")
@@ -41,9 +44,16 @@ def deliver_feishu(session: Session, *, settings: TeamSettings, delivery: Notifi
         delivery.status = "delivered"
         delivery.delivered_at = utcnow()
         delivery.error_text = ""
+        delivery.next_attempt_at = None
     except Exception as exc:  # noqa: BLE001 - retry is handled by the queue worker.
-        delivery.status = "failed"
         delivery.error_text = redact_text(str(exc))[:500]
+        delays = (5, 30, 120)
+        if delivery.attempts <= len(delays):
+            delivery.status = "retrying"
+            delivery.next_attempt_at = utcnow() + timedelta(seconds=delays[delivery.attempts - 1])
+        else:
+            delivery.status = "failed"
+            delivery.next_attempt_at = None
         raise
     finally:
         session.commit()

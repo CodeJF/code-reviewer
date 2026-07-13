@@ -27,3 +27,19 @@ def make_session_factory(settings: TeamSettings) -> sessionmaker[Session]:
 
 def initialize_database(session_factory: sessionmaker[Session]) -> None:
     Base.metadata.create_all(session_factory.kw["bind"])
+
+
+def migration_is_current(settings: TeamSettings) -> bool:
+    from alembic.config import Config
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+
+    config = Config("alembic.ini")
+    script = ScriptDirectory.from_config(config)
+    engine = make_engine(settings)
+    try:
+        with engine.connect() as connection:
+            current = MigrationContext.configure(connection).get_current_revision()
+    finally:
+        engine.dispose()
+    return current == script.get_current_head()

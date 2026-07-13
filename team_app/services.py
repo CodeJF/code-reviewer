@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from sl100_diagnose import diagnose
 from sl100_log_core import assert_redacted, redact_text
-from team_app.config import TeamSettings
 from team_app.models import (
     AuditEvent,
     DiagnosisJob,
@@ -18,19 +17,14 @@ from team_app.models import (
     Incident,
     IncidentComment,
     IncidentStatus,
+    InviteToken,
+    LoginAudit,
+    PasswordResetToken,
     Role,
     User,
+    UserSession,
     utcnow,
 )
-
-
-def role_from_groups(settings: TeamSettings, groups: list[str]) -> Role:
-    group_set = set(groups)
-    if group_set & settings.admin_groups:
-        return Role.ADMIN
-    if group_set & settings.oncall_groups:
-        return Role.ONCALL
-    return Role.VIEWER
 
 
 def ensure_user(
@@ -41,9 +35,11 @@ def ensure_user(
     display_name: str,
     role: Role,
 ) -> User:
-    user = session.scalar(select(User).where(User.subject == subject))
+    dev_subject = f"dev:{subject}"
+    username = f"dev-{subject}".lower()[:64]
+    user = session.scalar(select(User).where(User.subject == dev_subject))
     if user is None:
-        user = User(subject=subject, email=email, display_name=display_name, role=role)
+        user = User(subject=dev_subject, username=username, email=email, display_name=display_name, role=role)
         session.add(user)
     else:
         user.email = email or user.email
@@ -64,16 +60,32 @@ def audit(session: Session, *, actor_id: str | None, action: str, target_type: s
     ))
 
 
-def create_diagnosis(session: Session, *, actor: User, query: str, no_remote: bool, ttl_days: int) -> DiagnosisJob:
+def create_diagnosis(
+    session: Session,
+    *,
+    actor: User,
+    query: str,
+    no_remote: bool,
+    ttl_days: int,
+    retry_of_id: str | None = None,
+) -> DiagnosisJob:
     job = DiagnosisJob(
         created_by_id=actor.id,
-        query=query.strip(),
+        query=redact_text(query.strip()),
         no_remote=no_remote,
+        retry_of_id=retry_of_id,
         expires_at=utcnow() + timedelta(days=ttl_days),
     )
     session.add(job)
     session.flush()
-    audit(session, actor_id=actor.id, action="diagnosis.created", target_type="diagnosis", target_id=job.id)
+    audit(
+        session,
+        actor_id=actor.id,
+        action="diagnosis.retried" if retry_of_id else "diagnosis.created",
+        target_type="diagnosis",
+        target_id=job.id,
+        metadata={"retry_of_id": retry_of_id} if retry_of_id else None,
+    )
     session.commit()
     session.refresh(job)
     return job
@@ -149,7 +161,7 @@ def create_incident_from_diagnosis(session: Session, *, actor: User, diagnosis: 
     services = report.get("services") or []
     incident = Incident(
         diagnosis_id=diagnosis.id,
-        title=title.strip() or diagnosis.query[:300],
+        title=redact_text(title.strip() or diagnosis.query[:300]),
         service=services[0] if services else "",
         risk_level=report.get("risk_level", "unknown"),
         created_by_id=actor.id,
@@ -163,7 +175,15 @@ def create_incident_from_diagnosis(session: Session, *, actor: User, diagnosis: 
     return incident
 
 
-def transition_incident(session: Session, *, actor: User, incident: Incident, status: IncidentStatus, assignee_id: str | None) -> Incident:
+def transition_incident(
+    session: Session,
+    *,
+    actor: User,
+    incident: Incident,
+    status: IncidentStatus,
+    assignee_id: str | None,
+    assign: bool = False,
+) -> Incident:
     allowed = {
         IncidentStatus.OPEN: {IncidentStatus.INVESTIGATING, IncidentStatus.RESOLVED},
         IncidentStatus.INVESTIGATING: {IncidentStatus.MITIGATED, IncidentStatus.RESOLVED},
@@ -174,7 +194,7 @@ def transition_incident(session: Session, *, actor: User, incident: Incident, st
         raise ValueError(f"invalid incident transition: {incident.status.value} -> {status.value}")
     previous_status = incident.status
     incident.status = status
-    if assignee_id is not None:
+    if assign or assignee_id is not None:
         incident.assignee_id = assignee_id
     incident.resolved_at = utcnow() if status == IncidentStatus.RESOLVED else None
     audit(
@@ -221,5 +241,25 @@ def purge_expired_data(session: Session) -> dict[str, int]:
     audit_events = session.scalars(select(AuditEvent).where(AuditEvent.expires_at <= now)).all()
     for event in audit_events:
         session.delete(event)
+    login_audits = session.scalars(select(LoginAudit).where(LoginAudit.expires_at <= now)).all()
+    for event in login_audits:
+        session.delete(event)
+    sessions = session.scalars(select(UserSession).where(UserSession.expires_at <= now)).all()
+    for user_session in sessions:
+        session.delete(user_session)
+    token_cutoff = now - timedelta(days=30)
+    invites = session.scalars(select(InviteToken).where(InviteToken.expires_at <= token_cutoff)).all()
+    for invite in invites:
+        session.delete(invite)
+    resets = session.scalars(select(PasswordResetToken).where(PasswordResetToken.expires_at <= token_cutoff)).all()
+    for reset in resets:
+        session.delete(reset)
     session.commit()
-    return {"reports_expired": len(jobs), "comments_deleted": len(comments), "audit_events_deleted": len(audit_events)}
+    return {
+        "reports_expired": len(jobs),
+        "comments_deleted": len(comments),
+        "audit_events_deleted": len(audit_events),
+        "login_audits_deleted": len(login_audits),
+        "sessions_deleted": len(sessions),
+        "tokens_deleted": len(invites) + len(resets),
+    }

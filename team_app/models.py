@@ -47,9 +47,16 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     subject: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(320), default="")
     display_name: Mapped[str] = mapped_column(String(255), default="")
     role: Mapped[Role] = mapped_column(Enum(Role), default=Role.VIEWER)
+    password_hash: Mapped[str] = mapped_column(Text, default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    session_version: Mapped[int] = mapped_column(Integer, default=1)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -59,12 +66,14 @@ class DiagnosisJob(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     created_by_id: Mapped[str] = mapped_column(ForeignKey("team_users.id"), index=True)
+    retry_of_id: Mapped[str | None] = mapped_column(ForeignKey("diagnosis_jobs.id"), nullable=True, index=True)
     query: Mapped[str] = mapped_column(String(1000))
     no_remote: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[DiagnosisStatus] = mapped_column(Enum(DiagnosisStatus), default=DiagnosisStatus.QUEUED, index=True)
     report_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error_text: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: utcnow() + timedelta(days=90), index=True)
 
@@ -120,4 +129,58 @@ class NotificationDelivery(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     error_text: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class InviteToken(Base):
+    __tablename__ = "invite_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    username: Mapped[str] = mapped_column(String(64), index=True)
+    display_name: Mapped[str] = mapped_column(String(255), default="")
+    role: Mapped[Role] = mapped_column(Enum(Role), default=Role.VIEWER)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_by_id: Mapped[str] = mapped_column(ForeignKey("team_users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("team_users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_by_id: Mapped[str] = mapped_column(ForeignKey("team_users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UserSession(Base):
+    """Hashed session index for audit/revocation; the session payload remains in Redis."""
+
+    __tablename__ = "user_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("team_users.id"), index=True)
+    session_id_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+
+class LoginAudit(Base):
+    __tablename__ = "login_audits"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("team_users.id"), nullable=True, index=True)
+    username: Mapped[str] = mapped_column(String(64), default="", index=True)
+    source_hash: Mapped[str] = mapped_column(String(64), default="")
+    success: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    reason: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: utcnow() + timedelta(days=365), index=True)
