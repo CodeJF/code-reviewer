@@ -101,6 +101,15 @@ next_actions
 redaction_status
 ```
 
+报告还会提供：
+
+```text
+result_status  # actionable / no_evidence / data_unavailable / safety_blocked
+query_attempts # 未给时间时展示“最近 2 小时 -> 今天全天”的查询过程
+```
+
+`data_unavailable` 表示日志系统或索引不可用，绝不等价于“没有异常”；`safety_blocked` 表示命中内容无法安全脱敏，工具不会输出原始内容。
+
 ## 底层手动排障命令
 
 检查 ES：
@@ -195,6 +204,7 @@ Agent 流程：
 - 不保存原始 ES 日志。
 - 输出前先脱敏 IP、token、secret、手机号、邮箱、uuid 等敏感内容。
 - 默认限制返回条数，避免一次拉大量日志。
+- ES 可以继续保存原始日志，不需要修改 Filebeat；脱敏发生在本机 Agent 输出和模型调用之前。
 
 ## 后续优化
 

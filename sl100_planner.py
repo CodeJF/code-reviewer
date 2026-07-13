@@ -88,18 +88,31 @@ def plan_query(query: str, now: datetime | None = None) -> dict[str, Any]:
     around = ""
     around_minutes = 10
 
+    has_explicit_time = False
     if len(datetimes) >= 2:
         from_time, to_time = datetimes[0], datetimes[1]
+        has_explicit_time = True
     elif len(datetimes) == 1:
         around = datetimes[0]
+        has_explicit_time = True
     elif "最近一小时" in query or "近一小时" in query:
         start = now - timedelta(hours=1)
         from_time = start.strftime("%Y-%m-%d %H:%M")
         to_time = now.strftime("%Y-%m-%d %H:%M")
+        has_explicit_time = True
     else:
         hour_window = _hour_window(query, date_text)
         if hour_window:
             from_time, to_time = hour_window
+            has_explicit_time = True
+
+    time_strategy = "explicit"
+    if not date_text and not has_explicit_time:
+        start = now - timedelta(hours=2)
+        date_text = now.date().isoformat()
+        from_time = start.strftime("%Y-%m-%d %H:%M")
+        to_time = now.strftime("%Y-%m-%d %H:%M")
+        time_strategy = "recent_then_today"
 
     window = build_time_window(
         date_text=date_text,
@@ -121,6 +134,8 @@ def plan_query(query: str, now: datetime | None = None) -> dict[str, Any]:
         "around": around,
         "around_minutes": around_minutes,
         "time_window": window.to_dict(),
+        "has_explicit_time": has_explicit_time or bool(date_text and not time_strategy == "recent_then_today"),
+        "time_strategy": time_strategy,
         "chain_services": ["gateway", "deviceShadow", "pushService", "access"]
         if _contains_any(query, ["链路", "串", "登录失败", "完整"])
         else services,

@@ -186,12 +186,21 @@ def _filter_content_by_window(content: str, window: TimeWindow | None) -> str:
     return "\n".join(selected)
 
 
+def _drop_unsafe_lines(content: str) -> tuple[str, int]:
+    """Keep working with safe log lines instead of failing an entire diagnosis batch."""
+    safe_lines = []
+    dropped = 0
+    for line in content.splitlines():
+        if assert_redacted(line):
+            dropped += 1
+            continue
+        safe_lines.append(line)
+    return "\n".join(safe_lines), dropped
+
+
 def tail_remote_log(service: str, log: str = "error", tail_lines: int = DEFAULT_REMOTE_TAIL_LINES) -> dict[str, Any]:
     ref = resolve_log_ref(service, log)
-    content = _ssh_tail(ref, tail_lines)
-    leaks = assert_redacted(content)
-    if leaks:
-        raise RuntimeError(f"remote log redaction failed: {', '.join(leaks)}")
+    content, dropped = _drop_unsafe_lines(_ssh_tail(ref, tail_lines))
     return {
         "service": ref.service,
         "log": ref.log,
@@ -199,6 +208,8 @@ def tail_remote_log(service: str, log: str = "error", tail_lines: int = DEFAULT_
         "path": ref.path,
         "tail_lines": max(1, min(tail_lines, 5000)),
         "content": content,
+        "redaction_dropped_count": dropped,
+        "status": "safety_blocked" if not content and dropped else "partial" if dropped else "ok",
     }
 
 
@@ -219,6 +230,7 @@ def search_remote_log(
         _ssh_tail(ref, tail_lines),
         _optional_window(date_text, from_text, to_text, around_text, around_minutes),
     )
+    content, _ = _drop_unsafe_lines(content)
     results = []
     keyword_lower = keyword.lower().strip()
     for index, line in enumerate(content.splitlines(), start=1):
@@ -258,12 +270,12 @@ def analyze_remote_logs(
     window = _optional_window(date_text, from_text, to_text, around_text, around_minutes)
     snapshots = []
     refs = []
+    redaction_dropped_count = 0
     for log_name in log_names:
         ref = resolve_log_ref(service_name, log_name)
         content = _filter_content_by_window(_ssh_tail(ref, tail_lines), window)
-        leaks = assert_redacted(content)
-        if leaks:
-            raise RuntimeError(f"remote log redaction failed: {', '.join(leaks)}")
+        content, dropped = _drop_unsafe_lines(content)
+        redaction_dropped_count += dropped
         refs.append(ref)
         snapshots.append(LogSnapshot(
             path=f"ssh://{ref.host}{ref.path}",
@@ -280,6 +292,8 @@ def analyze_remote_logs(
         ],
         "tail_lines": max(1, min(tail_lines, 5000)),
         "time_window": window.to_dict() if window else None,
+        "redaction_dropped_count": redaction_dropped_count,
+        "status": "safety_blocked" if not any(snapshot.content for snapshot in snapshots) and redaction_dropped_count else "partial" if redaction_dropped_count else "ok",
     }
     if use_ai:
         docs_context = docs_context_for_query(f"SL100 {service_name} 日志 排障")

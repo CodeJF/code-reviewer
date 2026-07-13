@@ -49,7 +49,7 @@ uv run eval.py
 
 ### 产品化一键排障
 
-这是第一版真实可用产品入口。它会先生成确定性查询计划，再按 `Elasticsearch -> 远程文件日志 fallback` 查询，并输出统一 Incident Report。
+这是个人排障的主入口。它会先生成确定性查询计划，再按 `Elasticsearch -> 远程文件日志 fallback` 查询，并输出统一 Incident Report。没有给时间时，先查最近 2 小时；没有明确证据才扩展到今天全天。
 
 先看查询计划，不访问服务器：
 
@@ -79,8 +79,11 @@ uv run sl100_diagnose.py \
 
 ```text
 incident_id / query / time_window / services / data_sources / evidence
-timeline / root_cause / confidence / risk_level / next_actions / redaction_status
+timeline / root_cause / result_status / confidence / risk_level / next_actions
+redaction_status / query_attempts
 ```
+
+`result_status` 的含义：`actionable`（找到异常证据）、`no_evidence`（当前范围没有证据）、`data_unavailable`（日志数据不可用）、`safety_blocked`（无法安全展示命中内容）。后面三种状态都不能解释成“业务没有问题”。
 
 ### 配置
 
@@ -158,6 +161,8 @@ access       -> api-access-YYYY-MM-DD
 
 时间参数默认按 `Asia/Shanghai` 理解，查询 ES 时自动转成 UTC `@timestamp`。
 
+ES 保持原始日志，不需要修改 Filebeat 或索引。诊断工具只在本机内存读取原始响应；终端输出、JSON 报告、Agent trace 和发给模型的内容均经过脱敏，不保存原始 ES 日志。
+
 ### 远程文件日志 fallback
 
 当 ES 没有某个服务、采集有延迟，或需要看 `std_err.log` / `srd_out.log` 时，用远程文件日志作为补充。
@@ -182,6 +187,23 @@ uv run sl100_remote_logs.py analyze --service AdminService --logs error,stderr -
 ```
 
 远程文件日志只允许访问代码里的白名单路径，不接受任意服务器路径。
+
+### 真实案例质量评测
+
+没有历史工单时，用真实 ES 日志建立自己的评测集：
+
+```bash
+uv run sl100_review_cases.py collect --since-days 30 --per-service 10
+uv run sl100_review_cases.py review
+uv run eval_sl100_real_cases.py
+uv run eval_sl100_real_cases.py --enforce-gates
+```
+
+`review` 一次展示一条脱敏日志和工具结论，你只需要选择“真实故障 / 正常行为 / 证据不足”。候选和标签保存在 Git 忽略的 `.sl100/` 与 `evals/sl100_real_cases.local.jsonl`，只保存查询信息、ES 文档 ID、证据指纹、同类异常签名和你的判断，不保存原始日志正文；同一服务内仅保留一个同类异常候选，避免重复日志扭曲评测。
+
+### 团队工作台
+
+团队版把现有受控诊断能力封装成 Web 工作台：本地账号与管理员邀请、管理员/值班/只读角色、人工确认建事件、审计记录和可选飞书通知。部署前先按 [团队部署说明](docs/sl100-team-deployment.md) 配置 HTTPS、首位管理员与仅部署服务器可读的日志凭据。
 
 ### 本地日志诊断
 

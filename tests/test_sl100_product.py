@@ -72,6 +72,56 @@ class Sl100ProductTests(unittest.TestCase):
         self.assertIn("未命中明确异常", report["root_cause"])
         self.assertTrue(report["next_actions"])
 
+    def test_unavailable_source_is_not_reported_as_no_hit(self) -> None:
+        report = build_incident_report(
+            query="gateway error",
+            analysis={
+                "facts": {
+                    "source": {"type": "elasticsearch", "status": "unavailable"},
+                    "services": {"gateway": {}},
+                    "error_count": 0,
+                    "timeline": [],
+                },
+                "diagnosis": {"risk_level": "unknown", "summary": "ES 查询失败"},
+            },
+        )
+
+        self.assertEqual(report["result_status"], "data_unavailable")
+        self.assertEqual(report["risk_level"], "unknown")
+        self.assertIn("日志数据不可用", report["root_cause"])
+
+    def test_failed_analysis_redacts_error_text(self) -> None:
+        analysis = sl100_diagnose._failed_analysis("elasticsearch", "gateway", RuntimeError("token=secret-value"))
+
+        self.assertIn("<REDACTED_TOKEN>", analysis["facts"]["source"]["error"])
+        self.assertNotIn("secret-value", analysis["facts"]["source"]["error"])
+
+    def test_unclassified_error_is_still_actionable_evidence(self) -> None:
+        report = build_incident_report(
+            query="deviceShadow 异常",
+            analysis={
+                "facts": {
+                    "source": {"type": "elasticsearch", "status": "ok"},
+                    "services": {"deviceShadow": {}},
+                    "error_count": 1,
+                    "timeline": [{"service": "deviceShadow", "level": "error", "message": "unknown upstream failure"}],
+                    "incidents": [],
+                },
+                "diagnosis": {"risk_level": "medium", "summary": "unclassified"},
+            },
+        )
+
+        self.assertEqual(report["result_status"], "actionable")
+        self.assertEqual(len(report["evidence"]), 1)
+        self.assertIn("未分类", report["root_cause"])
+
+    def test_planner_uses_recent_then_today_without_time(self) -> None:
+        plan = plan_query("deviceShadow websocket 异常", now=datetime(2026, 7, 9, 12, 0, tzinfo=SHANGHAI_TZ))
+
+        self.assertEqual(plan["time_strategy"], "recent_then_today")
+        self.assertEqual(plan["from_time"], "2026-07-09 10:00")
+        self.assertEqual(plan["to_time"], "2026-07-09 12:00")
+
     def test_combined_report_merges_children(self) -> None:
         child = build_incident_report(
             query="pushService error",
@@ -119,6 +169,27 @@ class Sl100ProductTests(unittest.TestCase):
 
         self.assertEqual(report["risk_level"], "high")
         self.assertGreaterEqual(len(report["data_sources"]), 2)
+
+    def test_product_expands_to_today_only_after_recent_window_has_no_evidence(self) -> None:
+        empty_analysis = {
+            "facts": {
+                "source": {"type": "elasticsearch", "status": "ok", "returned": 0},
+                "services": {"deviceShadow": {}},
+                "error_count": 0,
+                "timeline": [],
+                "incidents": [],
+            },
+            "diagnosis": {"risk_level": "low", "summary": "empty", "incidents": [], "next_steps": []},
+        }
+
+        with patch("sl100_diagnose.analyze_es_logs", return_value=empty_analysis) as analyze:
+            report = sl100_diagnose.diagnose("deviceShadow websocket 异常", no_remote=True)
+
+        self.assertEqual(analyze.call_count, 2)
+        self.assertTrue(analyze.call_args_list[0].kwargs["from_text"])
+        self.assertEqual(analyze.call_args_list[1].kwargs["from_text"], "")
+        self.assertEqual([item["name"] for item in report["query_attempts"]], ["最近 2 小时", "今天全天"])
+        self.assertTrue(report["time_window"]["start_local"].endswith("00:00:00+08:00"))
 
 
 if __name__ == "__main__":

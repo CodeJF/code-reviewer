@@ -567,6 +567,8 @@ def run_agent(user_message: str, max_turns: int = 8, trace_output: str = "") -> 
 
 真实线上日志查询规则：
 - 对常规报障描述，优先调用 diagnose_sl100_incident 生成统一 Incident Report。
+- 如果 Incident Report 的 result_status 是 data_unavailable 或 safety_blocked，只能说明数据限制和下一步，不能猜测根因或说“没有问题”。
+- 如果 result_status 是 no_evidence，要明确说明当前时间范围内没有证据，不等于业务一定正常。
 - 用户提到“线上、服务器、阿里云、真实日志、测试同事报错、今天/昨天/某个时间点”时，优先使用 list_es_indices、count_es_errors、search_es_logs、analyze_es_logs。
 - ES 时间输入按 Asia/Shanghai 理解；如果用户说“9:20 左右”，用 around="YYYY-MM-DD 09:20"，around_minutes 默认 10。
 - 支持的 ES 服务优先是 gateway、deviceShadow、pushService、access。

@@ -15,6 +15,7 @@ import sys
 
 from sl100_es import (
     DEFAULT_ERROR_QUERY,
+    ElasticsearchQueryError,
     analyze_logs,
     count_logs,
     es_health,
@@ -65,8 +66,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
+def _run(args: argparse.Namespace) -> int:
 
     if args.command == "health":
         print(json.dumps(es_health(), ensure_ascii=False, indent=2))
@@ -137,6 +137,19 @@ def main() -> int:
         return 0
 
     raise AssertionError(f"unknown command: {args.command}")
+
+
+def main() -> int:
+    args = parse_args()
+    try:
+        return _run(args)
+    except ElasticsearchQueryError as exc:
+        print(json.dumps({
+            "result_status": "data_unavailable",
+            "error": str(exc),
+            "next_actions": ["检查 sl100-93 SSH、ES 索引映射或时间范围后重试。"],
+        }, ensure_ascii=False, indent=2), file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

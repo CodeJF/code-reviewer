@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from sl100_es import analyze_logs as analyze_es_logs
+from sl100_es import build_time_window
 from sl100_incident import build_incident_report, combine_incident_reports, render_incident_report
+from sl100_log_core import redact_text
 from sl100_planner import plan_query
 from sl100_remote import REMOTE_LOGS, analyze_remote_logs
 
@@ -43,11 +45,54 @@ def _time_kwargs(plan: dict[str, Any]) -> dict[str, Any]:
 
 def _needs_fallback(analysis: dict[str, Any]) -> bool:
     facts = analysis.get("facts", {})
-    return facts.get("error_count", 0) == 0 and not facts.get("incidents") and not facts.get("timeline")
+    source = facts.get("source") or {}
+    return (
+        source.get("status") in {"unavailable", "safety_blocked"}
+        or (facts.get("error_count", 0) == 0 and not facts.get("incidents") and not facts.get("timeline"))
+    )
 
 
-def diagnose(query: str, *, size: int = 80, remote_tail_lines: int = 2000, no_remote: bool = False) -> dict[str, Any]:
-    plan = plan_query(query)
+def _failed_analysis(source_type: str, service: str, error: Exception) -> dict[str, Any]:
+    source = {
+        "type": source_type,
+        "service": service,
+        "status": "unavailable",
+        "error": redact_text(str(error))[:500],
+    }
+    return {
+        "facts": {"services": {service: {}}, "source": source, "error_count": 0, "timeline": [], "incidents": []},
+        "diagnosis": {
+            "risk_level": "unknown",
+            "summary": f"{source_type} 查询失败: {source['error']}",
+            "next_steps": [
+                "确认日志数据源可访问后重试。",
+                "不要把数据源失败解释为业务没有异常。",
+            ],
+        },
+    }
+
+
+def _all_day_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    date_text = plan["date"]
+    window = build_time_window(date_text=date_text)
+    return {
+        **plan,
+        "from_time": "",
+        "to_time": "",
+        "around": "",
+        "time_window": window.to_dict(),
+        "time_strategy": "today_fallback",
+    }
+
+
+def _run_attempt(
+    query: str,
+    plan: dict[str, Any],
+    *,
+    size: int,
+    remote_tail_lines: int,
+    no_remote: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     reports = []
     time_kwargs = _time_kwargs(plan)
     for service in plan["chain_services"]:
@@ -59,21 +104,10 @@ def diagnose(query: str, *, size: int = 80, remote_tail_lines: int = 2000, no_re
                 use_ai=False,
                 **time_kwargs,
             )
-            reports.append(build_incident_report(query=query, analysis=es_analysis, plan={**plan, "services": [service]}))
-        except Exception as exc:  # noqa: BLE001 - product report should keep partial progress.
-            reports.append(build_incident_report(
-                query=query,
-                analysis={
-                    "facts": {"services": {service: {}}, "source": {"type": "elasticsearch", "service": service}},
-                    "diagnosis": {
-                        "risk_level": "unknown",
-                        "summary": f"ES 查询失败: {exc}",
-                        "next_steps": ["检查 sl100-93 SSH、ES 健康状态和索引映射。"],
-                    },
-                },
-                plan={**plan, "services": [service]},
-            ))
-            continue
+        except Exception as exc:  # noqa: BLE001 - a product report keeps partial progress.
+            es_analysis = _failed_analysis("elasticsearch", service, exc)
+
+        reports.append(build_incident_report(query=query, analysis=es_analysis, plan={**plan, "services": [service]}))
 
         if no_remote or not _needs_fallback(es_analysis) or service not in REMOTE_LOGS:
             continue
@@ -86,21 +120,43 @@ def diagnose(query: str, *, size: int = 80, remote_tail_lines: int = 2000, no_re
                 use_ai=False,
                 **time_kwargs,
             )
-            reports.append(build_incident_report(query=query, analysis=remote_analysis, plan={**plan, "services": [service]}))
-        except Exception as exc:  # noqa: BLE001 - include fallback failure in report.
-            reports.append(build_incident_report(
-                query=query,
-                analysis={
-                    "facts": {"services": {service: {}}, "source": {"type": "remote_file", "service": service}},
-                    "diagnosis": {
-                        "risk_level": "unknown",
-                        "summary": f"远程文件日志 fallback 查询失败: {exc}",
-                        "next_steps": ["检查 SSH alias、白名单日志路径和服务器权限。"],
-                    },
-                },
-                plan={**plan, "services": [service]},
-            ))
-    return combine_incident_reports(query, reports, plan=plan)
+        except Exception as exc:  # noqa: BLE001 - include fallback failure in the report.
+            remote_analysis = _failed_analysis("remote_file", service, exc)
+        reports.append(build_incident_report(query=query, analysis=remote_analysis, plan={**plan, "services": [service]}))
+
+    return reports, combine_incident_reports(query, reports, plan=plan)
+
+
+def diagnose(query: str, *, size: int = 80, remote_tail_lines: int = 2000, no_remote: bool = False) -> dict[str, Any]:
+    plan = plan_query(query)
+    attempt_plans = [("最近 2 小时", plan)]
+    if plan.get("time_strategy") != "recent_then_today":
+        attempt_plans = [("指定时间范围", plan)]
+
+    reports = []
+    query_attempts = []
+    final_plan = plan
+    for index, (name, attempt_plan) in enumerate(attempt_plans):
+        final_plan = attempt_plan
+        attempt_reports, attempt_summary = _run_attempt(
+            query,
+            attempt_plan,
+            size=size,
+            remote_tail_lines=remote_tail_lines,
+            no_remote=no_remote,
+        )
+        reports.extend(attempt_reports)
+        query_attempts.append({
+            "name": name,
+            "time_window": attempt_plan["time_window"],
+            "result_status": attempt_summary["result_status"],
+        })
+        if attempt_summary["result_status"] != "no_evidence":
+            break
+        if plan.get("time_strategy") == "recent_then_today" and index == 0:
+            attempt_plans.append(("今天全天", _all_day_plan(plan)))
+
+    return combine_incident_reports(query, reports, plan={**final_plan, "query_attempts": query_attempts})
 
 
 def main() -> int:
