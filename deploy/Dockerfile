@@ -1,7 +1,6 @@
 ARG PYTHON_IMAGE=python:3.13-slim
-FROM ${PYTHON_IMAGE} AS runtime
+FROM ${PYTHON_IMAGE} AS base
 
-ARG APP_VERSION=local
 ARG APT_DEBIAN_MIRROR=http://deb.debian.org/debian
 ARG APT_SECURITY_MIRROR=http://deb.debian.org/debian-security
 ARG PIP_INDEX_URL=https://pypi.org/simple
@@ -12,10 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX} \
     PIP_INDEX_URL=${PIP_INDEX_URL} \
-    HOME=/home/app \
-    APP_VERSION=${APP_VERSION}
-
-LABEL org.opencontainers.image.revision="${APP_VERSION}"
+    HOME=/home/app
 
 RUN sed -i \
         -e "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
@@ -41,10 +37,34 @@ RUN uv venv .venv \
         --require-hashes \
         /tmp/requirements.txt \
     && rm -f /tmp/requirements.txt
+
+FROM base AS development
+ARG APP_VERSION=local
+ENV APP_VERSION=${APP_VERSION}
+LABEL org.opencontainers.image.revision="${APP_VERSION}"
 COPY . .
+RUN uv sync --frozen --all-groups
+RUN chown -R app:app /app /home/app
+
+USER app
+EXPOSE 8000
+CMD ["uv", "run", "uvicorn", "iot_ops_agent.web.api:app", "--host", "0.0.0.0", "--port", "8000"]
+
+FROM base AS runtime
+ARG APP_VERSION=local
+ENV APP_VERSION=${APP_VERSION} \
+    UV_NO_DEV=1 \
+    UV_NO_SYNC=1
+LABEL org.opencontainers.image.revision="${APP_VERSION}"
+COPY alembic.ini ./
+COPY configs ./configs
+COPY evals ./evals
+COPY migrations ./migrations
+COPY samples ./samples
+COPY src ./src
 RUN uv sync --frozen --no-dev
 RUN chown -R app:app /app /home/app
 
 USER app
 EXPOSE 8000
-CMD ["uv", "run", "uvicorn", "team_app.api:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
+CMD ["uv", "run", "uvicorn", "iot_ops_agent.web.api:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]

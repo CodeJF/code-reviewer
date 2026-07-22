@@ -8,14 +8,14 @@ from fastapi.testclient import TestClient
 from redis import Redis
 from rq import Queue, SimpleWorker
 
-from team_app.accounts import bootstrap_admin
-from team_app.api import create_app
-from team_app.auth import RedisSecurityStore
-from team_app.config import TeamSettings
-from team_app.db import make_session_factory
-from team_app.models import Base
-from team_app.services import run_diagnosis_job
-from team_app.tasks import enqueue_diagnosis
+from iot_ops_agent.web.accounts import bootstrap_admin
+from iot_ops_agent.web.api import create_app
+from iot_ops_agent.web.auth import RedisSecurityStore
+from iot_ops_agent.web.config import TeamSettings
+from iot_ops_agent.web.db import make_session_factory
+from iot_ops_agent.web.models import Base
+from iot_ops_agent.web.services import run_diagnosis_job
+from iot_ops_agent.web.tasks import enqueue_diagnosis
 
 
 @unittest.skipUnless(os.environ.get("TEAM_INTEGRATION") == "1", "requires the local PostgreSQL and Redis Compose stack")
@@ -79,7 +79,7 @@ class TeamPostgresRedisIntegrationTests(unittest.TestCase):
                 },
             )
 
-        with patch("team_app.tasks.execute_diagnosis", side_effect=complete_job):
+        with patch("iot_ops_agent.web.tasks.execute_diagnosis", side_effect=complete_job):
             SimpleWorker(["diagnosis"], connection=self.redis).work(burst=True, logging_level="WARNING")
 
         completed = self.client.get(f"/api/diagnoses/{job_id}")

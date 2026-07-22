@@ -4,8 +4,8 @@ import json
 import unittest
 from unittest.mock import patch
 
-import sl100_es
-from sl100_log_core import LogSnapshot, assert_redacted, extract_log_facts, redact_text
+from iot_ops_agent.integrations import elasticsearch as sl100_es
+from iot_ops_agent.diagnosis.log_core import LogSnapshot, assert_redacted, extract_log_facts, redact_text
 
 
 class Sl100EsTests(unittest.TestCase):
@@ -179,8 +179,8 @@ class Sl100EsTests(unittest.TestCase):
 
         self.assertEqual(facts["services"]["deviceShadow"]["level_counts"]["debug"], 1)
         self.assertEqual(facts["error_count"], 0)
-        incident = next(item for item in facts["incidents"] if item["type"] == "websocket_failed")
-        self.assertEqual(incident["risk_level"], "medium")
+        self.assertEqual(facts["incidents"], [])
+        self.assertEqual(facts["risk_level"], "low")
 
     def test_gateway_wrongpass_is_database_connection_failure_at_medium_risk(self) -> None:
         facts = extract_log_facts([

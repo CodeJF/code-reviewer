@@ -6,9 +6,9 @@ from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from team_app.config import TeamSettings
-from team_app.db import initialize_database, make_session_factory
-from team_app.models import (
+from iot_ops_agent.web.config import TeamSettings
+from iot_ops_agent.web.db import initialize_database, make_session_factory
+from iot_ops_agent.web.models import (
     DiagnosisJob,
     DiagnosisStatus,
     Incident,
@@ -17,8 +17,8 @@ from team_app.models import (
     User,
     utcnow,
 )
-from team_app.notifications import deliver_feishu
-from team_app.reconciler import reconcile_once
+from iot_ops_agent.web.notifications import deliver_feishu
+from iot_ops_agent.web.reconciler import reconcile_once
 
 
 class TeamReliabilityTests(unittest.TestCase):

@@ -1,0 +1,24 @@
+groups:
+  - name: iot-ops-agent
+    rules:
+      - alert: IoTOpsApiMetricsUnavailable
+        expr: up{job="iot-ops-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: IoT Ops API metrics endpoint is unavailable
+      - alert: IoTOpsDiagnosisFailures
+        expr: iot_ops_diagnoses_total{status="failed"} > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Persisted diagnosis failures require review
+      - alert: IoTOpsBlockedToolCalls
+        expr: iot_ops_agent_tool_calls_total{status="blocked"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: The Agent policy blocked one or more tool calls

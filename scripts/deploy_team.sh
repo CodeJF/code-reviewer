@@ -12,6 +12,11 @@ REVISION_LOG="${REVISION_LOG:-/var/lib/sl100-deploy/revisions.log}"
 test -d "$REPO_DIR/.git" || { echo "Repository not found: $REPO_DIR" >&2; exit 1; }
 test -f "$ENV_FILE" || { echo "Missing deployment config: $ENV_FILE" >&2; exit 1; }
 
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
 cd "$REPO_DIR"
 test -z "$(git status --porcelain)" || { echo "Git worktree is not clean; deployment stopped." >&2; exit 1; }
 
@@ -37,7 +42,7 @@ rollback() {
   fi
   echo "Deployment failed; attempting application image rollback to $OLD_SHA" >&2
   if docker image inspect "sl100-team:$OLD_SHA" >/dev/null 2>&1; then
-    compose "$OLD_SHA" up -d --no-build api worker reconciler maintenance caddy || true
+    compose "$OLD_SHA" up -d --no-build api worker reconciler maintenance prometheus grafana caddy || true
   fi
   exit "$exit_code"
 }
@@ -52,14 +57,14 @@ compose "$NEW_SHA" run --rm api uv run alembic upgrade head
 compose "$NEW_SHA" up -d --no-build --remove-orphans
 
 for _ in $(seq 1 30); do
-  if curl --fail --silent --show-error "https://${APP_DOMAIN:-log.hassecurity.cn}/api/ready" >/dev/null; then
+  if curl --fail --silent --show-error "https://${APP_DOMAIN:-ops.example.invalid}/api/ready" >/dev/null; then
     break
   fi
   sleep 2
 done
-curl --fail --silent --show-error "https://${APP_DOMAIN:-log.hassecurity.cn}/api/ready"
+curl --fail --silent --show-error "https://${APP_DOMAIN:-ops.example.invalid}/api/ready"
 running_services="$(compose "$NEW_SHA" ps --status running --services)"
-for service in api worker reconciler maintenance postgres redis backup caddy; do
+for service in api worker reconciler maintenance postgres redis backup prometheus grafana caddy; do
   grep -qx "$service" <<<"$running_services" || { echo "Service is not running: $service" >&2; exit 1; }
 done
 compose "$NEW_SHA" ps

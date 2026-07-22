@@ -6,10 +6,10 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from team_app.api import create_app
-from team_app.config import TeamSettings
-from team_app.models import DiagnosisJob, DiagnosisStatus
-from team_app.services import run_diagnosis_job
+from iot_ops_agent.web.api import create_app
+from iot_ops_agent.web.config import TeamSettings
+from iot_ops_agent.web.models import DiagnosisJob, DiagnosisStatus
+from iot_ops_agent.web.services import run_diagnosis_job
 
 
 class TeamWorkspaceTests(unittest.TestCase):

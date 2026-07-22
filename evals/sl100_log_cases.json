@@ -108,5 +108,60 @@
       "services": ["deviceShadow"],
       "min_errors": 2
     }
+  },
+  {
+    "id": "payload_type_mismatch",
+    "description": "Payload 类型不匹配应该识别网关解码异常",
+    "log": "2026-07-01T10:10:01+08:00 error gateway error decoding key payload: cannot decode string into a map request_id=req-payload-type-001\n",
+    "expected": {
+      "incident_types": ["payload_type_mismatch"],
+      "allowed_incident_types": ["payload_type_mismatch"],
+      "services": ["gateway"],
+      "min_errors": 1
+    }
+  },
+  {
+    "id": "normal_websocket_close",
+    "description": "WebSocket 正常关闭不应该生成事故",
+    "log": "2026-07-01T10:11:01+08:00 info deviceShadow websocket: close 1000 (normal closure) uuid=device-003\n",
+    "expected": {
+      "incident_types": [],
+      "allowed_incident_types": [],
+      "services": ["deviceShadow"],
+      "min_errors": 0
+    }
+  },
+  {
+    "id": "isolated_device_transition",
+    "description": "单次设备上下线变化不应该被判定为频繁抖动",
+    "log": "2026-07-01T10:12:01+08:00 info deviceShadow device mqtt online subscribe uuid=device-004\n2026-07-01T10:14:01+08:00 warning deviceShadow device mqtt offline subscribe uuid=device-004\n",
+    "expected": {
+      "incident_types": [],
+      "allowed_incident_types": [],
+      "services": ["deviceShadow"],
+      "min_errors": 0
+    }
+  },
+  {
+    "id": "successful_push_info",
+    "description": "成功的推送信息日志不应该生成推送事故",
+    "log": "2026-07-01T10:13:01+08:00 info pushService getui push send success message_id=msg-push-ok-001\n",
+    "expected": {
+      "incident_types": [],
+      "allowed_incident_types": [],
+      "services": ["pushService"],
+      "min_errors": 0
+    }
+  },
+  {
+    "id": "debug_abnormal_websocket_close",
+    "description": "debug 级客户端异常关闭是可观测事件但不应单独生成事故",
+    "log": "2026-07-01T10:14:01+08:00 debug deviceShadow 客户端数据读取错误 error=\"websocket: close 1006 (abnormal closure): unexpected EOF\"\n",
+    "expected": {
+      "incident_types": [],
+      "allowed_incident_types": [],
+      "services": ["deviceShadow"],
+      "min_errors": 0
+    }
   }
 ]

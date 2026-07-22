@@ -9,11 +9,11 @@ from urllib.parse import urlparse
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from team_app.accounts import bootstrap_admin
-from team_app.api import create_app
-from team_app.auth import MemorySecurityStore
-from team_app.config import TeamSettings
-from team_app.models import DiagnosisJob, DiagnosisStatus, InviteToken, User, UserSession, utcnow
+from iot_ops_agent.web.accounts import bootstrap_admin
+from iot_ops_agent.web.api import create_app
+from iot_ops_agent.web.auth import MemorySecurityStore
+from iot_ops_agent.web.config import TeamSettings
+from iot_ops_agent.web.models import DiagnosisJob, DiagnosisStatus, InviteToken, User, UserSession, utcnow
 
 
 class LocalAccountTests(unittest.TestCase):

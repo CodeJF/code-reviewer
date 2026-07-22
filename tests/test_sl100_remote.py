@@ -4,8 +4,8 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-import sl100_remote
-from sl100_log_core import LogSnapshot, extract_log_facts
+from iot_ops_agent.integrations import remote as sl100_remote
+from iot_ops_agent.diagnosis.log_core import LogSnapshot, extract_log_facts
 
 
 class Sl100RemoteTests(unittest.TestCase):
@@ -36,7 +36,7 @@ class Sl100RemoteTests(unittest.TestCase):
 
         self.assertIn("error", names)
         self.assertIn("stderr", names)
-        self.assertTrue(all(item["host"] == "sl100-115" for item in logs))
+        self.assertTrue(all(item["host"] == "iot-app-a" for item in logs))
 
     def test_resolve_rejects_unknown_log_name(self) -> None:
         with self.assertRaises(ValueError):
@@ -50,7 +50,7 @@ class Sl100RemoteTests(unittest.TestCase):
             stderr="",
         )
 
-        with patch("sl100_remote.subprocess.run", return_value=completed) as run:
+        with patch("iot_ops_agent.integrations.remote.subprocess.run", return_value=completed) as run:
             result = sl100_remote.tail_remote_log("gateway", "error", tail_lines=50)
 
         self.assertEqual(result["service"], "gateway")
@@ -58,7 +58,7 @@ class Sl100RemoteTests(unittest.TestCase):
         self.assertIn("<REDACTED_PASSWORD>", result["content"])
         self.assertIn("<IP>", result["content"])
         command = run.call_args.args[0]
-        self.assertEqual(command[5], "sl100-115")
+        self.assertEqual(command[5], "iot-app-a")
         self.assertIn("/home/work/service/gateway/log/error.log", command[6])
 
     def test_search_remote_log_filters_error_like_lines(self) -> None:
@@ -69,7 +69,7 @@ class Sl100RemoteTests(unittest.TestCase):
             stderr="",
         )
 
-        with patch("sl100_remote.subprocess.run", return_value=completed):
+        with patch("iot_ops_agent.integrations.remote.subprocess.run", return_value=completed):
             result = sl100_remote.search_remote_log("pushService", "error", limit=10)
 
         self.assertEqual(len(result), 1)
@@ -83,7 +83,7 @@ class Sl100RemoteTests(unittest.TestCase):
             stderr="",
         )
 
-        with patch("sl100_remote.subprocess.run", return_value=completed):
+        with patch("iot_ops_agent.integrations.remote.subprocess.run", return_value=completed):
             result = sl100_remote.analyze_remote_logs("pushService", logs=["error"])
 
         incident_types = {item["type"] for item in result["facts"]["incidents"]}
@@ -100,7 +100,7 @@ class Sl100RemoteTests(unittest.TestCase):
             stderr="",
         )
 
-        with patch("sl100_remote.subprocess.run", return_value=completed):
+        with patch("iot_ops_agent.integrations.remote.subprocess.run", return_value=completed):
             result = sl100_remote.analyze_remote_logs(
                 "deviceShadow",
                 logs=["error"],

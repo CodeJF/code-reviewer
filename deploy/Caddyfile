@@ -2,7 +2,7 @@
   email {$CADDY_EMAIL}
 }
 
-{$APP_DOMAIN:log.hassecurity.cn} {
+{$APP_DOMAIN:ops.example.invalid} {
   encode zstd gzip
   header {
     Strict-Transport-Security "max-age=31536000; includeSubDomains"
@@ -13,5 +13,7 @@
     Content-Security-Policy "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
     -Server
   }
+  @internal path /internal/*
+  respond @internal 404
   reverse_proxy api:8000
 }

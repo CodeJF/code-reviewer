@@ -5,8 +5,8 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from team_app.config import TeamSettings
-from team_app.models import Base
+from iot_ops_agent.web.config import TeamSettings
+from iot_ops_agent.web.models import Base
 
 
 config = context.config

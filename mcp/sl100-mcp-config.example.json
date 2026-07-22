@@ -4,12 +4,14 @@
       "command": "uv",
       "args": [
         "--directory",
-        "/Users/jianfengxu/code-reviewer",
+        "/path/to/code-reviewer",
         "run",
-        "sl100_mcp_server.py"
+        "iot-ops",
+        "mcp",
+        "serve"
       ],
       "env": {
-        "SL100_ROOT": "/Users/jianfengxu/Desktop/SL100_Service"
+        "SL100_ROOT": "/path/to/private-iot-services"
       }
     }
   }

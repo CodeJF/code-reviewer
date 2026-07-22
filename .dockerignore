@@ -5,9 +5,14 @@ __pycache__/
 .env
 .team/
 .sl100/
+artifacts/
+examples/
+tools/
 configs/sl100.local.json
 deploy/.env
 deploy/secrets/
+docs/sl100-ops-agent-interview.md
+docs/claude-ai-agent-learn-transcript.md
 evals/sl100_real_cases.local.jsonl
 sl100_*_results.json
 sl100_trace_*.json

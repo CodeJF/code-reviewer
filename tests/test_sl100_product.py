@@ -4,10 +4,10 @@ import unittest
 from datetime import datetime
 from unittest.mock import patch
 
-import sl100_diagnose
-from sl100_es import SHANGHAI_TZ
-from sl100_incident import build_incident_report, combine_incident_reports
-from sl100_planner import plan_query
+from iot_ops_agent.diagnosis import diagnose as sl100_diagnose
+from iot_ops_agent.integrations.elasticsearch import SHANGHAI_TZ
+from iot_ops_agent.diagnosis.incident import build_incident_report, combine_incident_reports
+from iot_ops_agent.diagnosis.planner import plan_query
 
 
 class Sl100ProductTests(unittest.TestCase):
@@ -161,8 +161,8 @@ class Sl100ProductTests(unittest.TestCase):
             },
         }
 
-        with patch("sl100_diagnose.analyze_es_logs", return_value=es_analysis), \
-             patch("sl100_diagnose.analyze_remote_logs", return_value=remote_analysis):
+        with patch("iot_ops_agent.diagnosis.diagnose.analyze_es_logs", return_value=es_analysis), \
+             patch("iot_ops_agent.diagnosis.diagnose.analyze_remote_logs", return_value=remote_analysis):
             report = sl100_diagnose.diagnose(
                 "测试说 2026-07-09 上午 9 点多 deviceShadow websocket 异常",
             )
@@ -182,7 +182,7 @@ class Sl100ProductTests(unittest.TestCase):
             "diagnosis": {"risk_level": "low", "summary": "empty", "incidents": [], "next_steps": []},
         }
 
-        with patch("sl100_diagnose.analyze_es_logs", return_value=empty_analysis) as analyze:
+        with patch("iot_ops_agent.diagnosis.diagnose.analyze_es_logs", return_value=empty_analysis) as analyze:
             report = sl100_diagnose.diagnose("deviceShadow websocket 异常", no_remote=True)
 
         self.assertEqual(analyze.call_count, 2)

@@ -6,7 +6,7 @@
       "type": "debugpy",
       "request": "launch",
       "module": "uvicorn",
-      "args": ["team_app.api:app", "--reload", "--host", "127.0.0.1", "--port", "8780"],
+      "args": ["iot_ops_agent.web.api:app", "--reload", "--host", "127.0.0.1", "--port", "8780"],
       "env": {
         "APP_ENV": "development",
         "APP_URL": "http://127.0.0.1:8780",
@@ -21,7 +21,7 @@
       "name": "SL100：调试 worker",
       "type": "debugpy",
       "request": "launch",
-      "module": "team_app.worker",
+      "module": "iot_ops_agent.web.worker",
       "env": {
         "APP_ENV": "development",
         "AUTH_MODE": "dev",
@@ -35,8 +35,8 @@
       "name": "SL100：调试真实案例采集",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/sl100_review_cases.py",
-      "args": ["collect", "--since-days", "30", "--per-service", "10"],
+      "module": "iot_ops_agent.cli.main",
+      "args": ["cases", "collect", "--since-days", "30", "--per-service", "10"],
       "console": "integratedTerminal",
       "justMyCode": false
     }

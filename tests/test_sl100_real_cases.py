@@ -4,12 +4,12 @@ import unittest
 from datetime import datetime
 from unittest.mock import patch
 
-import eval_sl100_real_cases
-import sl100_review_cases
-from sl100_es import SHANGHAI_TZ
-from sl100_incident_types import INCIDENT_TYPE_KEYS
-from sl100_log_core import INCIDENT_RULES
-from sl100_real_cases import incident_dedup_key, incident_signature
+from iot_ops_agent.evaluation import real_cases as eval_sl100_real_cases
+from iot_ops_agent.evaluation import review_cases as sl100_review_cases
+from iot_ops_agent.integrations.elasticsearch import SHANGHAI_TZ
+from iot_ops_agent.diagnosis.incident_types import INCIDENT_TYPE_KEYS
+from iot_ops_agent.diagnosis.log_core import INCIDENT_RULES
+from iot_ops_agent.diagnosis.real_cases import incident_dedup_key, incident_signature
 
 
 class Sl100RealCasesTests(unittest.TestCase):

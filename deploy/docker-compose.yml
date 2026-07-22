@@ -67,15 +67,15 @@ services:
 
   worker:
     <<: *app
-    command: ["uv", "run", "python", "-m", "team_app.worker"]
+    command: ["uv", "run", "python", "-m", "iot_ops_agent.web.worker"]
 
   reconciler:
     <<: *app
-    command: ["uv", "run", "python", "-m", "team_app.reconciler"]
+    command: ["uv", "run", "python", "-m", "iot_ops_agent.web.reconciler"]
 
   maintenance:
     <<: *app
-    command: ["/bin/sh", "-c", "while true; do uv run python -m team_app.maintenance; sleep 86400; done"]
+    command: ["/bin/sh", "-c", "while true; do uv run python -m iot_ops_agent.web.maintenance; sleep 86400; done"]
 
   backup:
     image: ${POSTGRES_IMAGE:-postgres:16-alpine}
@@ -109,9 +109,43 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.12.0}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:13.1.0}
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in deploy/.env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_DOMAIN: 127.0.0.1
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-53000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
   backup_data:
   caddy_data:
   caddy_config:
+  prometheus_data:
+  grafana_data:

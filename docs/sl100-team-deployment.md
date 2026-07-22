@@ -1,42 +1,35 @@
-# SL100 团队版开发、测试与部署
+# IoT Ops Agent 开发、测试与部署
 
 团队版使用“本地账号 + 管理员邀请”，不依赖 OIDC，也不使用飞书登录。飞书仅是可选通知渠道；未配置 Webhook 时，工作台会明确显示“通知未启用”。
 
-生产地址为 `https://log.hassecurity.cn`。生产数据库、Redis、会话和备份都由 Docker Compose 管理，PostgreSQL 与 Redis 不暴露宿主机端口。
+本文使用 `https://ops.example.invalid` 作为匿名示例。实际生产域名、日志主机和凭据仅写入服务器私有配置。生产数据库、Redis、会话和备份都由 Docker Compose 管理，PostgreSQL 与 Redis 不暴露宿主机端口。
 
-## 1. 本地断点调试
+## 1. 本地运行与断点调试
 
-本地 Compose 默认只启动 PostgreSQL 和 Redis，API、worker 在宿主机运行，便于 VS Code 断点调试：
-
-```bash
-docker compose -p sl100-dev -f deploy/docker-compose.dev.yml up -d
-
-export APP_ENV=development
-export APP_URL=http://127.0.0.1:8780
-export AUTH_MODE=dev
-export DATABASE_URL=postgresql+psycopg://sl100:sl100-local-development@127.0.0.1:55432/sl100_team_dev
-export REDIS_URL=redis://127.0.0.1:56379/0
-
-uv run alembic upgrade head
-uv run uvicorn team_app.api:app --reload --host 127.0.0.1 --port 8780
-```
-
-另开终端运行后台进程：
+只安装 Docker Compose v2 即可启动完整本地环境：
 
 ```bash
-uv run python -m team_app.worker
-uv run python -m team_app.reconciler
+./bin/iotops up
 ```
 
-VS Code 已提供四个入口：调试 API、调试 worker、同时调试 API 与 worker、调试真实案例采集。开发模式使用请求头模拟角色，浏览器默认是本地管理员；生产环境固定使用 `AUTH_MODE=local`。
-
-停止本地基础设施：
+该命令构建开发镜像，启动 PostgreSQL、Redis，执行 Alembic 迁移，再启动 API、Worker 和 Reconciler。只有 `/api/ready` 通过后才返回成功。浏览器访问 `http://127.0.0.1:8780`。
 
 ```bash
-docker compose -p sl100-dev -f deploy/docker-compose.dev.yml down
+./bin/iotops status
+./bin/iotops logs api
+./bin/iotops down
 ```
 
-除非明确要清空本地测试数据，不要加 `-v`。
+`down` 保留命名卷中的数据。必须显式执行 `./bin/iotops reset --yes` 才会删除本地 PostgreSQL 和 Redis 数据。
+
+需要 VS Code 断点或热更新时，先安装 Python 3.13 和 `uv`，再运行：
+
+```bash
+uv sync --frozen --all-groups
+./bin/iotops debug
+```
+
+`debug` 自动启动依赖、执行迁移并监督 API、Worker、Reconciler 三个宿主机进程；按 Ctrl-C 会同时结束应用进程。开发模式使用请求头模拟角色，浏览器默认是本地管理员；生产环境固定使用 `AUTH_MODE=local`。
 
 ## 2. 本地账号流程测试
 
@@ -45,8 +38,8 @@ docker compose -p sl100-dev -f deploy/docker-compose.dev.yml down
 ```bash
 export AUTH_MODE=local
 export SESSION_SECRET='local-test-secret-at-least-32-characters'
-uv run python -m team_app.admin bootstrap
-uv run uvicorn team_app.api:app --reload --host 127.0.0.1 --port 8780
+uv run python -m iot_ops_agent.web.admin bootstrap
+uv run uvicorn iot_ops_agent.web.api:app --reload --host 127.0.0.1 --port 8780
 ```
 
 首位管理员命令会交互式读取用户名、显示名称和密码，密码不会进入命令行参数、环境变量或 shell 历史。
@@ -58,11 +51,10 @@ uv run uvicorn team_app.api:app --reload --host 127.0.0.1 --port 8780
 基础验证：
 
 ```bash
-uv sync --frozen
-uv run python -m unittest discover -s tests -v
-uv run eval_sl100_logs.py
-uv run eval_sl100_product.py
-uv run eval_sl100_real_cases.py --enforce-gates
+./bin/iotops test
+
+# 私有真实案例只报告当前门禁；数据集完整后再添加 --enforce-gates
+uv run iot-ops eval real
 ```
 
 团队版测试覆盖：
@@ -105,12 +97,15 @@ chmod 600 deploy/.env
 
 编辑 `deploy/.env`，至少设置：
 
-- `APP_DOMAIN=log.hassecurity.cn`
-- `APP_URL=https://log.hassecurity.cn`
+- `APP_DOMAIN=ops.example.invalid`（替换为实际域名）
+- `APP_URL=https://ops.example.invalid`（替换为实际 URL）
 - 长随机 `POSTGRES_PASSWORD`
 - 不少于 32 个随机字符的 `SESSION_SECRET`
+- 独立的长随机 `GRAFANA_ADMIN_PASSWORD`
 - `AUTH_MODE=local`
 - `SL100_SECRET_DIR=/opt/sl100-secrets`
+
+AI 辅助模式默认关闭。仅在组织数据策略允许、部署私有模型密钥后设置 `AI_ASSISTED_ENABLED=true`；每次执行仍需用户在计划审批页显式同意外部 AI。
 
 如果服务器访问 Docker Hub、Debian 或官方 PyPI 较慢，可以仅在服务器的 `deploy/.env` 中配置区域镜像。镜像地址会作为 Compose 镜像名或 Docker 构建参数传入，不影响依赖锁定版本：
 
@@ -156,7 +151,7 @@ cd /opt/sl100-diagnosis
 4. 启动 PostgreSQL、Redis 并执行部署前备份；
 5. 构建 `sl100-team:<Git SHA>` 镜像；
 6. 执行 `alembic upgrade head`；
-7. 启动 API、worker、reconciler、maintenance、backup 和 Caddy；
+7. 启动 API、worker、reconciler、maintenance、backup、Caddy、Prometheus 和 Grafana；
 8. 检查 `/api/ready`、HTTPS 及所有生产服务；
 9. 启动失败时恢复上一 Git SHA 的应用镜像。
 
@@ -164,7 +159,7 @@ cd /opt/sl100-diagnosis
 
 ```bash
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml exec api \
-  uv run python -m team_app.admin bootstrap
+  uv run python -m iot_ops_agent.web.admin bootstrap
 ```
 
 功能稳定并合并到 `main` 后，后续服务器只执行：
@@ -197,13 +192,15 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml \
 恢复完成后再次检查：
 
 ```bash
-curl --fail https://log.hassecurity.cn/api/ready
+curl --fail https://ops.example.invalid/api/ready
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml ps
 ```
 
+Prometheus 仅在 Compose 内部抓取 `/internal/metrics`。Grafana 默认只绑定宿主机 `127.0.0.1:53000`，使用 SSH tunnel 访问，不要直接向公网开放该端口。
+
 ## 7. 最终人工验收
 
-1. 浏览器访问 `https://log.hassecurity.cn`，确认 HTTPS 证书和安全 Cookie；
+1. 浏览器访问实际生产 URL，确认 HTTPS 证书和安全 Cookie；
 2. 创建首位管理员，登录并生成成员邀请；
 3. 分别使用管理员、值班、只读账号验证权限；
 4. 值班成员完成诊断、失败重试、人工升级事件、负责人指派、评论和状态解决；
@@ -212,3 +209,5 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml ps
 7. 重启 API、worker、Redis 和 PostgreSQL，确认 Session、任务和业务数据符合预期；
 8. 执行一次备份校验和恢复演练；
 9. 确认数据库中只存在 Argon2id 密码哈希和邀请/重置 token 的 SHA-256 哈希。
+10. 验证规则模式和 AI 同意门、工具轨迹、证据引用、反馈与质量看板；
+11. 通过 SSH tunnel 打开 Grafana，确认诊断状态、耗时、token、反馈和工具失败指标。
