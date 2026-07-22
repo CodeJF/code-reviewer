@@ -1,0 +1,114 @@
+name: ${DEV_COMPOSE_PROJECT_NAME:-sl100-dev}
+
+x-app: &app
+  image: iot-ops-agent-dev:${APP_VERSION:-local}
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+    target: development
+    args:
+      APP_VERSION: ${APP_VERSION:-local}
+      PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.13-slim}
+      APT_DEBIAN_MIRROR: ${APT_DEBIAN_MIRROR:-http://deb.debian.org/debian}
+      APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-http://deb.debian.org/debian-security}
+      PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+      UV_DEFAULT_INDEX: ${UV_DEFAULT_INDEX:-https://pypi.org/simple}
+  environment:
+    APP_ENV: development
+    APP_URL: http://127.0.0.1:${IOTOPS_PORT:-8780}
+    AUTH_MODE: dev
+    DATABASE_URL: postgresql+psycopg://sl100:${DEV_POSTGRES_PASSWORD:-sl100-local-development}@postgres:5432/sl100_team_dev
+    REDIS_URL: redis://redis:6379/0
+    SESSION_SECRET: local-development-session-secret-not-for-production
+    SL100_CONFIG: /app/configs/sl100.example.json
+    AI_ASSISTED_ENABLED: ${AI_ASSISTED_ENABLED:-false}
+    APP_VERSION: ${APP_VERSION:-local}
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    environment:
+      POSTGRES_DB: sl100_team_dev
+      POSTGRES_USER: sl100
+      POSTGRES_PASSWORD: ${DEV_POSTGRES_PASSWORD:-sl100-local-development}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sl100 -d sl100_team_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-56379}:6379"
+    volumes:
+      - redis_dev_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    <<: *app
+    command: ["uv", "run", "alembic", "upgrade", "head"]
+    restart: "no"
+
+  api:
+    <<: *app
+    command: ["uv", "run", "uvicorn", "iot_ops_agent.web.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:${IOTOPS_PORT:-8780}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8000/api/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  worker:
+    <<: *app
+    command: ["uv", "run", "python", "-m", "iot_ops_agent.web.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  reconciler:
+    <<: *app
+    command: ["uv", "run", "python", "-m", "iot_ops_agent.web.reconciler"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  tooling:
+    <<: *app
+    profiles: ["tools"]
+    command: ["uv", "run", "iot-ops", "--help"]
+    depends_on: {}
+    restart: "no"
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:

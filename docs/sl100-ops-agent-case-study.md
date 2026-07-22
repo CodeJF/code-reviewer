@@ -1,154 +1,127 @@
-# SL100 运维诊断 Agent 项目说明
+# IoT Ops Agent 项目案例
 
 ## 项目定位
 
-SL100 运维诊断 Agent 是一个面向 IoT 后端服务的本地诊断工具。它从脱敏日志入手，结合规则分析、Claude Tool Use、Go 工具服务、文档检索和 MCP Server，辅助排查设备登录、MQTT 连接、WebSocket 推送、OTA、推送队列和数据库连接等问题。
+IoT Ops Agent 是一个面向 IoT 多服务系统的受控运维诊断产品。值班成员用自然语言描述故障，系统先生成服务、时间窗口、数据源和执行预算明确的只读计划；人工批准后，确定性规则或受控 Tool Use Agent 才能查询脱敏日志，并输出带稳定证据引用的 Incident Report。
 
-这个项目的重点不是做一个聊天机器人，而是把真实业务排障流程拆成可验证、可复用、可接入 AI 客户端的工具链。
+仓库保留早期 `sl100_*` 模块名，目的是兼容既有 CLI、MCP 配置和部署脚本。公开材料统一使用匿名 IoT 场景，真实主机、域名、日志和评测语料只存在于 Git 外的私有配置中。
 
-## 真实问题
+## 业务问题
 
-SL100 是多服务 IoT 架构，设备链路涉及：
+设备登录、MQTT、WebSocket、OTA、推送和数据库故障通常跨越多个服务。过去的排障方式存在四个问题：
 
-- `gateway`：App/设备 HTTP 入口，设备登录、绑定、用户和设备接口。
-- `deviceShadow`：MQTT、设备影子、设备上下线、WebSocket 推送。
-- `pushService`：Redis 队列消费，App 推送。
-- `AdminService`、`cloudStorage` 等辅助服务。
+- 测试反馈通常只有现象和大致时间，值班成员需要手工转换成日志查询条件；
+- 原始日志可能包含 IP、token、手机号、设备标识，不能直接发送给模型；
+- 一次 LLM 对话缺少工具边界、证据约束和失败回退，无法作为生产操作链路；
+- 没有冻结案例、用户反馈和运行指标，规则或 prompt 改动后的质量不可衡量。
 
-排查线上或本地问题时，经常需要同时看日志、服务职责、MQTT/WebSocket 文档和历史经验。直接把原始日志丢给 LLM 有三个问题：
+## 从已有工具到可交付产品
 
-- 日志可能包含敏感字段，必须先脱敏。
-- 原始日志 token 成本高，且 LLM 容易被噪声带偏。
-- 没有 eval 时，很难知道规则或 prompt 改动是否造成误报。
+项目没有推倒重写。第一阶段已有日志脱敏、确定性规则、ES/远程文件查询、CLI Tool Use Agent、Go 日志工具、文档检索和 MCP Server。本次交付在这些能力上增加产品控制面：
 
-## 架构
+1. 把“直接执行诊断”拆成 `plan → approve → execute`，旧 API 继续兼容；
+2. 增加受控 Agent runtime，限制工具、服务、时间、远程访问、回合、调用次数、时间和 token；
+3. 为报告证据生成稳定 `evidence_id`，拒绝模型引用不存在的证据；
+4. 增加团队账号、RBAC、CSRF、Redis Session、审计、事件协作、反馈和质量面板；
+5. 增加 PostgreSQL 数据迁移、RQ Worker、任务恢复、留存清理、备份、Prometheus/Grafana 和 CI 门禁；
+6. 把会过期的真实 ES 案例补成最小化脱敏快照，使评测可以离线回放。
+
+这段演进本身是项目的重要价值：在保留既有投资和兼容性的前提下，把技术原型升级为可治理、可运营、可验证的 Agent 产品。
+
+## 产品工作流
 
 ```mermaid
-flowchart TD
-    User["用户问题 / 日志路径"] --> CLI["sl100_log_agent.py / sl100_agent.py"]
-    CLI --> Redact["脱敏层<br/>IP / token / secret / phone / email"]
-    Redact --> Rules["规则事实层<br/>sl100_rules.py / extract_rule_facts_from_paths"]
-    Rules --> Facts["facts JSON<br/>service / error_count / incidents / timeline"]
-    Facts --> LocalReport["本地诊断报告"]
-    Facts --> Claude["Claude API<br/>归因和建议"]
-
-    Claude --> ToolLoop["Tool Use Agent loop"]
-    ToolLoop --> LogTools["日志工具<br/>list/read/search/analyze"]
-    ToolLoop --> DocsTool["文档检索工具<br/>search_sl100_docs"]
-    ToolLoop --> GoTool["Go 日志服务<br/>go-log-tools :8788"]
-
-    DocsTool --> RAG["SL100 文档 chunks"]
-    GoTool --> GoFacts["Go 高性能解析结果"]
-    LogTools --> Facts
-    RAG --> Claude
-    GoFacts --> Claude
-
-    MCP["sl100_mcp_server.py"] --> LogTools
-    MCP --> DocsTool
+flowchart LR
+    User["值班成员"] --> Plan["只读 QueryPlan"]
+    Plan --> Gate{"人工批准"}
+    Gate --> Rules["确定性执行器"]
+    Gate --> Agent["受控 Tool Use Agent"]
+    Agent --> Policy["Policy Guard"]
+    Rules --> Tools["只读工具"]
+    Policy --> Tools
+    Tools --> ES["Elasticsearch"]
+    Tools --> Files["白名单文件日志"]
+    Tools --> Docs["内部文档"]
+    ES --> Report["Incident Report"]
+    Files --> Report
+    Docs --> Report
+    Report --> Evidence["evidence_id 校验"]
+    Evidence --> Human["人工升级 Incident"]
+    Human --> Feedback["反馈与质量指标"]
 ```
 
-## 关键设计
+## 核心设计
 
-### 1. 先规则，后 AI
+### 确定性事实是主链路
 
-日志先经过确定性代码处理：
+日志先经过代码处理：读取受限范围、脱敏、识别服务和级别、提取 request/message/device 标识、匹配 incident 类型、生成时间线和证据。规则模式不依赖模型；AI 模式也必须先调用确定性诊断工具。
 
-- 读取指定日志尾部。
-- 脱敏敏感字段。
-- 识别服务名。
-- 统计 error/warning/fatal。
-- 提取 request_id、message_id、uuid。
-- 匹配 incident 类型。
-- 生成 timeline。
+### Agent 不是无限循环
 
-Claude 只负责在 facts 基础上做归因、解释和排查建议。
+每个计划保存摘要和 SHA-256 digest。运行时只暴露计划允许的只读工具，并重新约束模型参数：
 
-### 2. Golden Set 评测
+- 服务不得超出批准链路；
+- 时间窗口以计划为准，模型不能扩大；
+- `no_remote` 会从工具集合移除远程日志；
+- 默认最多 3 回合、6 次工具调用、120 秒；
+- 输入、输出和工具结果分别有预算；
+- 工具参数、结果、错误和证据引用经脱敏后才持久化。
 
-日志诊断有 10 条 golden cases，覆盖：
+模型失败、越界调用、超预算、输出非 JSON、脱敏失败或证据引用无效时，系统保留确定性报告并把执行标记为 `fallback`。
 
-- 设备登录失败
-- MQTT 连接失败
-- MQTT payload 格式错误
-- 设备上下线异常
-- RPC 调用失败
-- 推送失败
-- OTA 推送失败
-- WebSocket 推送失败
-- 配置初始化失败
-- 数据库连接失败
+### 人工保留最终权限
 
-评测不仅检查应该命中的 incident，也检查误报：
+创建计划不会读取日志；规则和 AI 模式都需要发起人或管理员批准。AI 模式还要求单次显式同意。诊断结果不会自动修改生产配置或创建事件，必须由值班成员人工升级为 Incident。
 
-```text
-SL100 log eval: 10/10 cases, 41/41 checks
-```
+### 兼容与数据演进
 
-文档检索有 4 条 retrieval cases：
+旧 `/api/diagnoses` 保持创建后执行规则诊断；新版 `/api/v1/diagnoses` 返回 `planned` 任务。Alembic 增量迁移为旧任务表增加计划、执行模式、模型、token、耗时等字段，并新增工具轨迹和诊断反馈表。
 
-```text
-SL100 docs eval: 4/4 cases, 16/16 checks
-```
+## 工程化能力
 
-### 3. Go 工具服务
+- FastAPI 团队工作台，管理员、值班、只读三种角色；
+- Argon2id 密码、本地邀请、一次性重置链接、登录锁定、CSRF；
+- Redis 服务端 Session、提交限流、并发诊断限制；
+- PostgreSQL 持久化、RQ 后台任务、幂等入队和 stuck job reconciler；
+- 事件状态机、负责人、评论、可选通知、完整审计；
+- 报告 90 天、工具轨迹 30 天、审计 365 天的留存策略；
+- Caddy HTTPS、PostgreSQL 备份与恢复脚本；
+- Prometheus 聚合指标和只绑定本机的 Grafana 看板；
+- CI 中的 lint、覆盖率、合成评测、依赖漏洞、Go 测试、迁移、Compose 和镜像构建。
 
-Go 侧实现 `go-log-tools`：
+## 质量证据
 
-- CLI 模式：直接分析单个日志文件。
-- HTTP 模式：暴露 `/analyze` 给 Python Agent 调用。
-- 单元测试：覆盖设备登录失败、脱敏和误报控制。
+本次本地交付验证结果：
 
-Python 负责编排 Agent，Go 负责稳定、快速、可复用的工具能力。
+| 验证项 | 结果 |
+| --- | --- |
+| Python 测试 | 70 passed，1 skipped；PostgreSQL/Redis 启动后该集成测试单独通过 |
+| 核心分支覆盖率 | 85.39%，门禁 80% |
+| 合成日志评测 | 15/15，57/57；包含正常关闭、debug 断开、孤立上下线、成功推送等负例 |
+| 产品行为评测 | 5/5，23/23 |
+| 文档检索评测 | 4/4，16/16 |
+| MCP / Go | smoke test 与 `go test ./...` 通过 |
+| 供应链 | `pip-audit` 无已知漏洞 |
+| 部署 | PostgreSQL 从零迁移到 `20260716_0002`，生产镜像构建成功 |
+| UI | 桌面端、390px 移动端、审批弹窗、质量面板实测，浏览器控制台零错误 |
 
-### 4. RAG 文档问答
+私有真实回放包含 43 条人工标注案例，其中 39 条故障、4 条正常。当前证据命中率 72%，类型 precision 100%、recall 78%，正常行为高风险误报为 0。它仍未达到“正常样本至少 8、证据命中率至少 90%、recall 至少 85%”的上线门槛。
 
-文档检索不直接引入向量库，而是先做轻量版本：
+这是刻意保留的真实结论：历史 ES 文档已经过期且部分没有快照，正常样本数量也不足。工程代码已具备交付形态，但生产质量结论必须在补采数据后重新验证，不能用合成样本替代。
 
-- Markdown chunk。
-- source/title/score 返回。
-- 领域关键词增强。
-- retrieval eval 验证检索质量。
+## 技术取舍
 
-这个阶段的重点是理解 RAG 数据流，而不是过早引入复杂基础设施。
-
-### 5. MCP Server
-
-MCP Server 暴露本地工具：
-
-- `analyze_logs`
-- `search_sl100_docs`
-- `summarize_incident`
-- `find_service_errors`
-
-这样 Claude Desktop / Claude Code 等 MCP 客户端可以直接调用本地诊断能力。
-
-## 安全策略
-
-- 不提交真实 SL100 日志。
-- 不提交 API key、token、secret、手机号、邮箱、设备 SN、真实公网 IP。
-- 样例日志使用 synthetic 或脱敏内容。
-- `.gitignore` 忽略 eval 输出、facts 输出、trace 输出。
-- 默认先分析本地日志，不直接连接线上服务器。
-
-## 工程取舍
-
-| 方案 | 选择 | 原因 |
+| 取舍 | 决策 | 原因 |
 | --- | --- | --- |
-| 直接把原始日志给 LLM | 不采用 | 成本高、风险高、不可控 |
-| 规则事实 + LLM 解释 | 采用 | 可测、可控、便于定位误报 |
-| 一开始上向量库 | 不采用 | 当前文档规模小，轻量检索更适合学习和调试 |
-| Go 替代全部 Python | 不采用 | Python 更适合 Agent 编排，Go 适合高性能工具 |
-| 先做前端 UI | 不采用 | CLI 更适合早期验证诊断链路 |
+| 重写旧系统 | 不采用 | 旧规则、CLI、MCP 和数据接入已有价值，增量演进更符合真实工程 |
+| 原始日志直接给 LLM | 不采用 | 隐私、成本、噪声和不可复现风险高 |
+| LLM 自由选择范围 | 不采用 | 查询计划和参数策略必须是权威边界 |
+| AI 失败即任务失败 | 不采用 | 确定性诊断可作为降级结果 |
+| 自动执行生产修复 | 不提供 | 当前阶段风险收益不成立，人工拥有最终权限 |
+| 只报告合成准确率 | 不采用 | 同时公开真实 holdout 的失败门槛，避免 demo 指标冒充生产质量 |
 
-## 可展示结果
+## 可用于职业经历的准确表述
 
-当前项目已经具备：
+可以把它描述为“从既有日志诊断工具演进出的受控 IoT Ops Agent 产品”，强调自己完成了 Agent policy、证据约束、团队协作、质量评测、可观测性和部署链路。不要声称已经自动修复生产故障，也不要声称真实评测已经通过全部上线门槛。
 
-- 本地日志诊断 CLI。
-- 规则 facts 输出。
-- Golden log evals。
-- Claude Tool Use Agent。
-- Go 日志分析服务。
-- 轻量 RAG 文档问答。
-- MCP Server。
-- 求职 Demo 和面试讲稿。
+这个项目可以证明的能力包括：Agent 与传统后端结合、增量架构演进、安全和权限设计、离线评测、可靠性工程、可观测性、前后端产品交付，以及面对不完整真实数据时保持指标诚实。

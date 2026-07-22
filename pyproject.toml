@@ -1,10 +1,78 @@
 [project]
-name = "code-reviewer"
-version = "0.1.0"
-description = "Add your description here"
+name = "iot-ops-agent"
+version = "0.9.0"
+description = "Controlled IoT operations diagnosis Agent with deterministic evidence, human approval, and team incident workflows."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "alembic>=1.16.0",
+    "argon2-cffi>=25.1.0",
     "anthropic>=0.105.2",
+    "fastapi>=0.115.12",
+    "itsdangerous>=2.2.0",
+    "psycopg[binary]>=3.2.6",
     "python-dotenv>=1.2.2",
+    "redis>=5.2.1",
+    "rq>=2.1.0",
+    "sqlalchemy>=2.0.38",
+    "uvicorn[standard]>=0.34.0",
 ]
+
+[project.scripts]
+iot-ops = "iot_ops_agent.cli.main:main"
+sl100-agent = "iot_ops_agent.agent.tools:main"
+sl100-diagnose = "iot_ops_agent.diagnosis.diagnose:main"
+sl100-docs-qa = "iot_ops_agent.cli.docs_qa:main"
+sl100-es-logs = "iot_ops_agent.cli.es_logs:main"
+sl100-log-agent = "iot_ops_agent.cli.log_agent:main"
+sl100-mcp-server = "iot_ops_agent.agent.mcp_server:main"
+sl100-remote-logs = "iot_ops_agent.cli.remote_logs:main"
+sl100-review-cases = "iot_ops_agent.evaluation.review_cases:main"
+sl100-rules = "iot_ops_agent.cli.rules:main"
+sl100-eval-docs = "iot_ops_agent.evaluation.docs:main"
+sl100-eval-logs = "iot_ops_agent.evaluation.logs:main"
+sl100-eval-product = "iot_ops_agent.evaluation.product:main"
+sl100-eval-real-cases = "iot_ops_agent.evaluation.real_cases:main"
+
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"iot_ops_agent.web" = ["static/*"]
+"iot_ops_agent.resources" = ["*.md"]
+
+[dependency-groups]
+dev = [
+    "pip-audit>=2.9.0",
+    "pytest>=8.4.0",
+    "pytest-cov>=6.2.0",
+    "ruff>=0.12.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py313"
+exclude = [".venv", ".team", ".sl100", "artifacts"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.coverage.run]
+branch = true
+omit = [
+    "src/iot_ops_agent/web/admin.py",
+    "src/iot_ops_agent/web/maintenance.py",
+    "src/iot_ops_agent/web/tasks.py",
+    "src/iot_ops_agent/web/worker.py",
+]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true

@@ -1,0 +1,94 @@
+name: IoT Ops Agent CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      - run: uv sync --frozen --all-groups
+      - run: uv run ruff check .
+      - run: uv run pytest --cov=iot_ops_agent.web --cov-report=term-missing
+      - run: uv run iot-ops eval logs --output /tmp/sl100_eval_results.json
+      - run: uv run iot-ops eval docs --output /tmp/sl100_doc_eval_results.json
+      - run: uv run iot-ops eval product --output /tmp/sl100_product_eval_results.json
+      - run: uv run python scripts/test_sl100_mcp.py
+      - run: test -z "$(find . -maxdepth 1 -type f -name '*.py' -print)"
+      - run: uv run pip-audit
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: tools/go-log-tools/go.mod
+      - run: go test ./...
+        working-directory: tools/go-log-tools
+      - run: RUNTIME_ENV_FILE=.env.example docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml config >/tmp/sl100-team-compose.yml
+      - run: docker build --build-arg APP_VERSION=${{ github.sha }} -f deploy/Dockerfile -t iot-ops-agent:${{ github.sha }} .
+
+  local-stack-smoke:
+    runs-on: ubuntu-latest
+    env:
+      DEV_COMPOSE_PROJECT_NAME: iot-ops-ci-${{ github.run_id }}
+      IOTOPS_PORT: "18780"
+      POSTGRES_PORT: "15432"
+      REDIS_PORT: "16379"
+    steps:
+      - uses: actions/checkout@v6
+      - run: ./bin/iotops up
+      - run: curl --fail --silent http://127.0.0.1:18780/api/ready
+      - name: Verify long-running services
+        run: |
+          services="$(docker compose -f deploy/docker-compose.dev.yml ps --status running --services)"
+          for service in postgres redis api worker reconciler; do
+            grep -qx "$service" <<<"$services"
+          done
+      - if: always()
+        run: ./bin/iotops down
+
+  postgres-redis-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: sl100_team_test
+          POSTGRES_USER: sl100
+          POSTGRES_PASSWORD: integration-test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sl100 -d sl100_team_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      APP_ENV: test
+      APP_URL: http://127.0.0.1:8000
+      AUTH_MODE: local
+      SESSION_SECRET: integration-test-session-secret-at-least-32-characters
+      DATABASE_URL: postgresql+psycopg://sl100:integration-test-password@127.0.0.1:5432/sl100_team_test
+      REDIS_URL: redis://127.0.0.1:6379/0
+      TEAM_INTEGRATION: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      - run: uv sync --frozen --all-groups
+      - run: uv run alembic upgrade head
+      - run: uv run pytest tests/test_team_integration.py -v

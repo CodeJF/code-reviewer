@@ -1,0 +1,51 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "SL100：调试 API",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["iot_ops_agent.web.api:app", "--reload", "--host", "127.0.0.1", "--port", "8780"],
+      "env": {
+        "APP_ENV": "development",
+        "APP_URL": "http://127.0.0.1:8780",
+        "AUTH_MODE": "dev",
+        "DATABASE_URL": "postgresql+psycopg://sl100:sl100-local-development@127.0.0.1:55432/sl100_team_dev",
+        "REDIS_URL": "redis://127.0.0.1:56379/0"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "SL100：调试 worker",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "iot_ops_agent.web.worker",
+      "env": {
+        "APP_ENV": "development",
+        "AUTH_MODE": "dev",
+        "DATABASE_URL": "postgresql+psycopg://sl100:sl100-local-development@127.0.0.1:55432/sl100_team_dev",
+        "REDIS_URL": "redis://127.0.0.1:56379/0"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "SL100：调试真实案例采集",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "iot_ops_agent.cli.main",
+      "args": ["cases", "collect", "--since-days", "30", "--per-service", "10"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ],
+  "compounds": [
+    {
+      "name": "SL100：同时调试 API + worker",
+      "configurations": ["SL100：调试 API", "SL100：调试 worker"],
+      "stopAll": true
+    }
+  ]
+}

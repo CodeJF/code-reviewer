@@ -1,7 +1,7 @@
 {
   "timezone": "Asia/Shanghai",
   "elasticsearch": {
-    "ssh_host": "sl100-93",
+    "ssh_host": "iot-logs",
     "base_url": "http://127.0.0.1:9200",
     "max_hits": 200,
     "services": {
@@ -13,7 +13,7 @@
   },
   "remote_logs": {
     "gateway": {
-      "host": "sl100-115",
+      "host": "iot-app-a",
       "logs": {
         "error": "/home/work/service/gateway/log/error.log",
         "debug": "/home/work/service/gateway/log/debug.log",
@@ -24,7 +24,7 @@
       }
     },
     "deviceShadow": {
-      "host": "sl100-115",
+      "host": "iot-app-a",
       "logs": {
         "error": "/home/work/service/deviceShadow/log/error.log",
         "debug": "/home/work/service/deviceShadow/log/debug.log",
@@ -33,7 +33,7 @@
       }
     },
     "pushService": {
-      "host": "sl100-15",
+      "host": "iot-app-b",
       "logs": {
         "error": "/home/work/service/pushService/log/error.log",
         "debug": "/home/work/service/pushService/log/debug.log",

@@ -44,7 +44,9 @@
         "confidence",
         "risk_level",
         "next_actions",
-        "redaction_status"
+        "redaction_status",
+        "result_status",
+        "query_attempts"
       ]
     }
   },

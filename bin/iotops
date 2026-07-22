@@ -1,0 +1,238 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+COMPOSE_FILE="$ROOT_DIR/deploy/docker-compose.dev.yml"
+APP_PORT="${IOTOPS_PORT:-8780}"
+
+compose() {
+  docker compose -f "$COMPOSE_FILE" "$@"
+}
+
+usage() {
+  cat <<'EOF'
+IoT Ops Agent local lifecycle
+
+Usage: ./bin/iotops <command> [options]
+
+Commands:
+  up                 Build and start PostgreSQL, Redis, migration, API, worker, and reconciler
+  down               Stop the local stack while preserving data
+  restart            Restart the complete local stack
+  status             Show containers and API readiness
+  logs [service]     Follow all logs or one service
+  debug              Run app processes on the host with containerized dependencies
+  test               Run lint, Python tests, evaluations, MCP smoke, and Go tests in containers
+  clean [--dry-run]  Remove known caches and generated artifacts only
+  reset --yes        Stop the stack and delete its local data volumes
+  help               Show this help
+EOF
+}
+
+fail() {
+  printf 'iotops: %s\n' "$*" >&2
+  exit 1
+}
+
+require_docker() {
+  command -v docker >/dev/null 2>&1 || fail "Docker is not installed. Install Docker Desktop or Docker Engine first."
+  docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required (`docker compose`)."
+  docker info >/dev/null 2>&1 || fail "Docker is not running. Start Docker and retry."
+}
+
+service_is_running() {
+  compose ps --status running --services 2>/dev/null | grep -qx "$1"
+}
+
+check_port() {
+  service="$1"
+  port="$2"
+  override="$3"
+  if service_is_running "$service"; then
+    return
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      fail "Port $port for $service is already in use. Stop that process or run with $override=<port>."
+    fi
+  elif command -v ss >/dev/null 2>&1; then
+    if ss -ltn | awk '{print $4}' | grep -Eq "[:.]${port}$"; then
+      fail "Port $port for $service is already in use. Stop that process or run with $override=<port>."
+    fi
+  fi
+}
+
+check_local_ports() {
+  check_port api "$APP_PORT" IOTOPS_PORT
+  check_port postgres "${POSTGRES_PORT:-55432}" POSTGRES_PORT
+  check_port redis "${REDIS_PORT:-56379}" REDIS_PORT
+}
+
+up() {
+  require_docker
+  check_local_ports
+  printf 'Starting IoT Ops Agent on http://127.0.0.1:%s ...\n' "$APP_PORT"
+  if ! compose up --build --detach --wait postgres redis migrate api worker reconciler; then
+    printf '\nStartup failed. Recent migration and API logs:\n' >&2
+    compose logs --tail=100 migrate api >&2 || true
+    exit 1
+  fi
+  printf 'IoT Ops Agent is ready: http://127.0.0.1:%s\n' "$APP_PORT"
+  compose ps
+}
+
+down() {
+  require_docker
+  compose down --remove-orphans
+  printf 'Local services stopped; PostgreSQL and Redis data were preserved.\n'
+}
+
+status() {
+  require_docker
+  compose ps --all
+  if command -v curl >/dev/null 2>&1 && curl --fail --silent "http://127.0.0.1:${APP_PORT}/api/ready" >/dev/null; then
+    printf 'API ready: http://127.0.0.1:%s/api/ready\n' "$APP_PORT"
+  else
+    printf 'API is not ready on http://127.0.0.1:%s/api/ready\n' "$APP_PORT" >&2
+    return 1
+  fi
+}
+
+logs() {
+  require_docker
+  if [ "$#" -gt 1 ]; then
+    fail "Usage: ./bin/iotops logs [service]"
+  fi
+  if [ "$#" -eq 1 ]; then
+    compose logs --follow --tail=200 "$1"
+  else
+    compose logs --follow --tail=200
+  fi
+}
+
+debug() {
+  require_docker
+  command -v uv >/dev/null 2>&1 || fail "The debug command requires uv and Python 3.13 on the host."
+  check_local_ports
+  compose up --detach --wait postgres redis
+
+  debug_env=(
+    "APP_ENV=development"
+    "APP_URL=http://127.0.0.1:${APP_PORT}"
+    "AUTH_MODE=${AUTH_MODE:-dev}"
+    "DATABASE_URL=postgresql+psycopg://sl100:${DEV_POSTGRES_PASSWORD:-sl100-local-development}@127.0.0.1:${POSTGRES_PORT:-55432}/sl100_team_dev"
+    "REDIS_URL=redis://127.0.0.1:${REDIS_PORT:-56379}/0"
+    "SESSION_SECRET=${SESSION_SECRET:-local-development-session-secret-not-for-production}"
+    "SL100_CONFIG=$ROOT_DIR/configs/sl100.example.json"
+    "AI_ASSISTED_ENABLED=${AI_ASSISTED_ENABLED:-false}"
+  )
+
+  cd "$ROOT_DIR"
+  env "${debug_env[@]}" uv run alembic upgrade head
+  env "${debug_env[@]}" uv run uvicorn iot_ops_agent.web.api:app --reload --host 127.0.0.1 --port "$APP_PORT" &
+  api_pid=$!
+  env "${debug_env[@]}" uv run python -m iot_ops_agent.web.worker &
+  worker_pid=$!
+  env "${debug_env[@]}" uv run python -m iot_ops_agent.web.reconciler &
+  reconciler_pid=$!
+
+  cleanup_debug() {
+    trap - EXIT INT TERM
+    kill "$api_pid" "$worker_pid" "$reconciler_pid" 2>/dev/null || true
+    wait "$api_pid" "$worker_pid" "$reconciler_pid" 2>/dev/null || true
+  }
+  trap cleanup_debug EXIT
+  trap 'cleanup_debug; exit 0' INT TERM
+  printf 'Debug services running on http://127.0.0.1:%s; press Ctrl-C to stop app processes.\n' "$APP_PORT"
+
+  while kill -0 "$api_pid" 2>/dev/null && kill -0 "$worker_pid" 2>/dev/null && kill -0 "$reconciler_pid" 2>/dev/null; do
+    sleep 1
+  done
+  fail "A debug process exited unexpectedly."
+}
+
+test_project() {
+  require_docker
+  cd "$ROOT_DIR"
+  compose build tooling
+  compose run --rm --no-deps tooling /bin/sh -lc '
+    uv run ruff check . &&
+    uv run pytest --cov=iot_ops_agent.web --cov-report=term-missing &&
+    uv run iot-ops eval logs &&
+    uv run iot-ops eval docs &&
+    uv run iot-ops eval product &&
+    uv run python scripts/test_sl100_mcp.py
+  '
+  docker run --rm \
+    --volume "$ROOT_DIR/tools/go-log-tools:/workspace" \
+    --workdir /workspace \
+    golang:1.24-alpine go test ./...
+}
+
+clean_project() {
+  dry_run=false
+  if [ "${1:-}" = "--dry-run" ]; then
+    dry_run=true
+    shift
+  fi
+  if [ "$#" -ne 0 ]; then
+    fail "Usage: ./bin/iotops clean [--dry-run]"
+  fi
+
+  targets=(
+    "$ROOT_DIR/.coverage"
+    "$ROOT_DIR/.pytest_cache"
+    "$ROOT_DIR/.ruff_cache"
+    "$ROOT_DIR/artifacts"
+    "$ROOT_DIR/build"
+    "$ROOT_DIR/dist"
+  )
+  while IFS= read -r path; do
+    targets+=("$path")
+  done < <(find "$ROOT_DIR" \
+    -path "$ROOT_DIR/.git" -prune -o \
+    -path "$ROOT_DIR/.venv" -prune -o \
+    \( -type d \( -name __pycache__ -o -name '*.egg-info' \) -o -type f -name .DS_Store \) -print)
+
+  for path in "${targets[@]}"; do
+    if [ -e "$path" ]; then
+      printf '%s\n' "$path"
+      if [ "$dry_run" = false ]; then
+        rm -rf -- "$path"
+      fi
+    fi
+  done
+  if [ "$dry_run" = true ]; then
+    printf 'Dry run only; nothing was removed.\n'
+  else
+    printf 'Generated caches and artifacts removed. Secrets, configuration, datasets, and virtual environments were preserved.\n'
+  fi
+}
+
+reset() {
+  if [ "${1:-}" != "--yes" ] || [ "$#" -ne 1 ]; then
+    fail "Reset deletes local PostgreSQL and Redis data. Confirm with: ./bin/iotops reset --yes"
+  fi
+  require_docker
+  compose down --volumes --remove-orphans
+  printf 'Local containers and data volumes removed.\n'
+}
+
+command="${1:-help}"
+if [ "$#" -gt 0 ]; then
+  shift
+fi
+
+case "$command" in
+  up) up "$@" ;;
+  down) down "$@" ;;
+  restart) down; up ;;
+  status) status "$@" ;;
+  logs) logs "$@" ;;
+  debug) debug "$@" ;;
+  test) test_project "$@" ;;
+  clean) clean_project "$@" ;;
+  reset) reset "$@" ;;
+  help|-h|--help) usage ;;
+  *) usage >&2; fail "Unknown command: $command" ;;
+esac

@@ -12,16 +12,27 @@ wheels/
 # Secrets
 .env
 configs/sl100.local.json
+deploy/.env
+deploy/secrets/
+.team/
+
+# Private local notes
+docs/sl100-ops-agent-interview.md
+docs/claude-ai-agent-learn-transcript.md
 
 # IDE
+.DS_Store
 .idea/
 .vscode/
 *.swp
 
 # Go build output
 go-tools/analyzer
+tools/go-log-tools/go-log-tools
 
 # Generated review results
+.coverage
+artifacts/
 *.review.json
 eval_results.json
 sl100_eval_results.json
@@ -33,6 +44,9 @@ sl100_es_*.json
 sl100_remote_*.json
 sl100_incident_*.json
 sl100_product_*.json
+sl100_real_eval_results.json
+evals/sl100_real_cases.local.jsonl
+.sl100/
 !evals/sl100_product_cases.json
 sl100_report_*.md
 sl100_trace_*.json

@@ -34,7 +34,7 @@ def require(condition: bool, message: str) -> None:
 
 def main() -> int:
     proc = subprocess.Popen(
-        [sys.executable, str(ROOT / "sl100_mcp_server.py")],
+        [sys.executable, "-m", "iot_ops_agent.agent.mcp_server"],
         cwd=ROOT,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -104,7 +104,7 @@ def main() -> int:
             },
         })
         remote_logs_text = remote_logs["result"]["content"][0]["text"]
-        require("sl100-115" in remote_logs_text, "list_remote_log_files did not return gateway logs")
+        require("iot-app-a" in remote_logs_text, "list_remote_log_files did not return configured gateway logs")
 
         print("MCP smoke test passed")
         return 0
